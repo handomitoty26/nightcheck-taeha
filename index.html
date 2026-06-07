@@ -1,0 +1,1042 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>단순 출석 체크 시스템</title>
+    <!-- PWA 설정 -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#00b894">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="태하관심야자습출석부v1">
+    <link rel="apple-touch-icon" href="icons/icon-192.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+    <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png">
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <style>
+        /* =========================================================
+           [화면 고정] 바운스 차단 및 100% 꽉 차는 레이아웃
+           ========================================================= */
+        html, body {
+            position: fixed !important; 
+            top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important;
+            width: 100vw !important; 
+            height: 100vh !important;
+            height: 100dvh !important;
+            margin: 0 !important; padding: 0 !important;
+            overflow: hidden !important; 
+            background-color: #f4f6f9;
+            font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+            color: #333;
+            -webkit-user-select: none; user-select: none;
+            touch-action: none; 
+            overscroll-behavior: none;
+        }
+
+        input, textarea, select { -webkit-user-select: auto; user-select: auto; touch-action: auto !important; }
+
+        #app-container {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            display: flex; flex-direction: column;
+            box-sizing: border-box;
+            background-color: #f4f6f9;
+        }
+
+        /* 메뉴칸 및 통계칸 상하 여백 미세 축소 */
+        .header-container { background: #ffffff; padding: 10px 15px; border-radius: 12px; box-shadow: 0 3px 10px rgba(0,0,0,0.08); margin: 10px 10px 0 10px; display: flex; justify-content: space-between; align-items: center; flex: 0 0 auto; gap: 10px; z-index: 10; }
+        .stats-bar { display: flex; gap: 8px; margin: 8px 10px; background: #ffffff; padding: 8px 15px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); font-size: 14px; font-weight: bold; justify-content: space-around; flex-wrap: wrap; letter-spacing: -0.5px; flex: 0 0 auto; z-index: 10; }
+        
+        /* 메인 컨텐츠 영역 */
+        #main-content {
+            flex: 1 1 0; 
+            display: flex; 
+            flex-direction: column; 
+            padding: 0 10px 8px 10px; 
+            box-sizing: border-box;
+            overflow: hidden; 
+        }
+
+        .header-left { flex: 1; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 8px; }
+        .header-center { flex: 1; display: flex; justify-content: center; align-items: center; text-align: center; }
+        .header-right { flex: 1; display: flex; justify-content: flex-end; align-items: center; gap: 8px; flex-wrap: wrap; }
+        
+        .main-title { font-size: 19px; font-weight: 900; color: #2c3e50; margin: 0; letter-spacing: -0.5px; cursor: pointer; padding: 6px 12px; border-radius: 8px; transition: background 0.2s; border: 1px dashed transparent; }
+        .main-title:hover { background: #edf2f7; border: 1px dashed #cbd5e0; }
+        
+        .layout-combined { display: flex; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border: 1px solid #d1d8e0; box-sizing: border-box;}
+        .layout-btn { background: #3498db; color: white; padding: 8px 14px; font-weight: bold; cursor: pointer; font-size: 12px; display: flex; align-items: center; white-space: nowrap;}
+        .layout-status { background: #f8fafc; color: #7f8c8d; padding: 8px 14px; font-weight: bold; font-size: 12px; display: flex; align-items: center; justify-content: center; border-left: 1px solid #d1d8e0; white-space: nowrap;}
+        .layout-status.text-active { background: #e1f5fe; color: #2980b9; }
+
+        .action-btn { display: inline-block; padding: 8px 12px; border-radius: 8px; font-weight: bold; font-size: 12px; color: white; cursor: pointer; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border: none; font-family: inherit; }
+        .bg-warning { background-color: #f39c12; }
+        .bg-teal { background-color: #16a085; }
+        input[type="file"] { display: none; }
+        
+        /* 배치도 그리드 (화면 공간 100% 채움) */
+        #grid-board { 
+            flex: 1 1 0; 
+            display: grid; 
+            gap: 4px; 
+            background: #ffffff; 
+            padding: 8px; 
+            border-radius: 10px; 
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05); 
+            box-sizing: border-box; 
+            width: 100%; 
+            overflow: auto; 
+            -webkit-overflow-scrolling: touch;
+        }
+        .no-data-msg { grid-column: 1 / -1; text-align: center; padding: 30px 20px; color: #a0aec0; font-size: 15px; font-weight: bold; line-height: 1.6; display: flex; align-items: center; justify-content: center; height: 100%; flex-direction: column; }
+        
+        /* 좌석 동적 확대 및 학번 짤림 방지 미세 조정 (min-height 증가, gap 축소) */
+        .seat-box { background: #f8fafc; border: 2px solid #e2e8f0; border-radius: 8px; padding: 3px; text-align: center; cursor: pointer; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100%; width: 100%; min-height: 50px; box-sizing: border-box; position: relative; gap: 2px; transition: all 0.1s ease; overflow: hidden; }
+        .seat-box .s-id { font-size: 11px; color: #4a5568; font-weight: 900; letter-spacing: -0.5px; white-space: nowrap; line-height: 1; margin: 0; }
+        .seat-box .s-name { font-size: 14px; font-weight: 900; color: #2d3748; letter-spacing: -0.5px; white-space: nowrap; line-height: 1; margin: 0; }
+        .seat-box .s-tag { font-size: 11px; font-weight: bold; padding: 2px 5px; border-radius: 4px; background: #e2e8f0; color: #718096; white-space: nowrap; line-height: 1; margin-top: 1px; }
+        
+        /* 좌석 출석 스타일 */
+        .seat-box.status-attended { border: 2px solid #2ecc71 !important; background-color: #f0fdf4; }
+        .seat-box.status-attended .s-tag { background: #2ecc71; color: white; }
+        
+        .passage { height: 100%; width: 100%; border: none; background-color: transparent; box-sizing: border-box; }
+        .empty-seat { background: #ffffff; border: 1px dashed #a0aec0; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #a0aec0; font-weight: bold; height: 100%; width: 100%; min-height: 50px; box-sizing: border-box; }
+        .facility { display: flex; align-items: center; justify-content: center; background: #e2e8f0; font-weight: bold; border-radius: 8px; font-size: 12px; color: #4a5568; border: 1px dashed #a0aec0; height: 100%; width: 100%; min-height: 50px; white-space: nowrap; box-sizing: border-box; }
+        
+        /* 메모칸 영역 하단 마진 축소 */
+        .daily-memo-container { flex: 0 0 auto; background: #ffffff; padding: 10px 15px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); margin-top: 6px; box-sizing: border-box; display: flex; flex-direction: column; gap: 4px; }
+        .daily-memo-header { font-size: 12px; font-weight: bold; color: #2c3e50; display: flex; align-items: center; gap: 5px; }
+        #daily-memo { width: 100%; height: 45px; border: 1px solid #cbd5e0; border-radius: 8px; padding: 8px 10px; font-size: 13px; font-family: inherit; resize: none; box-sizing: border-box; background: #f8fafc; color: #333; line-height: 1.4; }
+        #daily-memo:focus { outline: none; border-color: #3498db; background: #fff; box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1); }
+        
+        /* 모달 스타일 */
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); justify-content: center; align-items: center; z-index: 1000; touch-action: none; }
+        .modal-box { background: white; padding: 20px; border-radius: 12px; width: 90%; max-width: 400px; max-height: 85vh; overflow-y: auto; -webkit-overflow-scrolling: touch; box-shadow: 0 10px 25px rgba(0,0,0,0.2); touch-action: pan-y; }
+        .modal-header { font-size: 17px; font-weight: 900; margin-bottom: 12px; border-bottom: 2px solid #edf2f7; padding-bottom: 8px; color: #2b6cb0; display: flex; justify-content: space-between; align-items: center; }
+        .modal-close { background: #a0aec0; color: white; border: none; padding: 12px; border-radius: 6px; cursor: pointer; font-weight: bold; width: 100%; margin-top: 10px; font-size: 15px; }
+        .btn-save { background: #3498db; color: white; border: none; padding: 12px; border-radius: 6px; cursor: pointer; font-weight: bold; width: 100%; font-size: 15px; transition: 0.2s; margin-bottom: 8px; }
+        .edit-input { width: 100%; padding: 10px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 16px; margin-bottom: 10px; box-sizing: border-box; text-align: center; font-weight: bold; }
+        
+        .history-btn { display: block; width: 100%; padding: 12px; margin-bottom: 8px; border-radius: 8px; border: 1px solid #e2e8f0; background: #f8fafc; font-size: 14px; font-weight: bold; color: #2c3e50; cursor: pointer; text-align: left; }
+        .export-btn { display: inline-flex; align-items: center; justify-content: center; background: #27ae60; color: white; border: none; padding: 10px 14px; border-radius: 6px; font-size: 14px; font-weight: bold; cursor: pointer; margin-bottom: 5px; width: 100%; box-sizing: border-box;}
+        .native-select { width: 100%; padding: 12px; border: 2px solid #d35400; border-radius: 8px; font-size: 15px; font-weight: bold; color: #d35400; background: #fff; text-align: center; box-sizing: border-box; outline: none; margin-bottom: 8px; }
+        .load-btn { width: 100%; background: #d35400; color: white; font-weight: bold; padding: 12px; border: none; border-radius: 8px; font-size: 14px; cursor: pointer; }
+        .upload-label { display: block; background: #8e44ad; color: white; text-align: center; padding: 12px; border-radius: 8px; font-weight: bold; font-size: 14px; cursor: pointer; }
+
+        /* 현재 조회 날짜 상태 표시 pill */
+        .info-status { padding: 4px 10px; border-radius: 8px; font-size: 12px; font-weight: 900; letter-spacing: -0.5px; background: #e8f5e9; color: #27ae60; white-space: nowrap; }
+
+        /* 과거 기록 달력 UI (태하관 프로그램과 동일) */
+        .cal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; font-size: 16px; font-weight: 900; color: #2c3e50; }
+        .cal-nav-btn { background: #edf2f7; border: none; padding: 10px 15px; border-radius: 8px; font-weight: bold; cursor: pointer; color: #4a5568; font-size: 14px; }
+        .cal-nav-btn:active { background: #cbd5e0; }
+        .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; text-align: center; }
+        .cal-day-header { font-size: 12px; font-weight: bold; color: #718096; padding: 5px 0; }
+        .cal-day { width: 100%; padding: 12px 0; border-radius: 8px; font-size: 15px; font-weight: bold; background: #f8fafc; color: #cbd5e0; border: 1px solid #e2e8f0; display: flex; align-items: center; justify-content: center; font-family: inherit; -webkit-appearance: none; appearance: none; }
+        .cal-day.has-data { background: #3498db; color: white; border: none; cursor: pointer; box-shadow: 0 3px 6px rgba(52, 152, 219, 0.3); touch-action: manipulation; -webkit-tap-highlight-color: rgba(0,0,0,0.1); }
+        .cal-day.has-data:active { background: #2980b9; transform: scale(0.95); }
+        .cal-sun { color: #e53e3e; }
+        .cal-sat { color: #3182ce; }
+
+        optgroup { font-weight: 900; color: #2c3e50; background: #f1f5f9; }
+        option { font-weight: bold; color: #333; background: #fff; }
+    </style>
+
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function() {
+          navigator.serviceWorker.register('sw.js')
+            .then(function(reg) { console.log('SW registered'); })
+            .catch(function(err) { console.log('SW error', err); });
+        });
+      }
+    </script>
+</head>
+<body>
+
+    <div id="app-container">
+        
+        <div class="header-container">
+            <div class="header-left">
+                <div class="layout-combined">
+                    <label class="layout-btn" for="input-layout">🔄 배치도</label>
+                    <input type="file" id="input-layout" accept=".xlsx, .xls">
+                    <div id="info-layout" class="layout-status">미로드</div>
+                </div>
+            </div>
+            
+            <div class="header-center" title="타이틀을 터치하여 변경">
+                <h1 id="main-title" class="main-title" onclick="openTitleModal()">태하관 자습실 ✏️</h1>
+            </div>
+            
+            <div class="header-right">
+                <button class="action-btn bg-teal" onclick="toggleFullScreen()">⛶ 전체화면</button>
+                <button class="action-btn" id="btn-return-today" style="display:none; background:#27ae60;" onclick="returnToToday()">🔄 오늘로</button>
+                <button class="action-btn bg-warning" id="btn-history" style="display:none;" onclick="openHistoryModal()">🗓️ 과거 기록</button>
+            </div>
+        </div>
+
+        <div class="stats-bar" id="stats-panel" style="display:none;">
+            <div id="info-status" class="info-status">📅 오늘</div>
+            <div style="color: #2c3e50;">📋 총원: <span id="stat-total">0</span></div>
+            <div style="color: #27ae60;">🟢 출석: <span id="stat-attended">0</span></div>
+            <div style="color: #7f8c8d;">⚪ 부재: <span id="stat-absent">0</span></div>
+        </div>
+
+        <div id="main-content">
+            <div id="grid-board">
+                <div class="no-data-msg">
+                    <span>상단의 [🔄 배치도] 버튼을 눌러 최초 1회 엑셀 파일을 등록해 주세요.</span><br><br>
+                    <span style="font-weight:normal; font-size:13px;">(배치도 연동 후, 좌석을 터치하면 '출석/부재' 상태가 전환됩니다)</span>
+                </div>
+            </div>
+
+            <div class="daily-memo-container" id="memo-container" style="display:none;">
+                <div class="daily-memo-header">📝 특이사항 (자동 저장)</div>
+                <textarea id="daily-memo" placeholder="터치하여 내용을 작성하세요."></textarea>
+            </div>
+        </div>
+    </div>
+
+    <div id="title-modal" class="modal-overlay">
+        <div class="modal-box" style="max-width: 320px;">
+            <div class="modal-header">
+                <span style="color:#2c3e50;">자습실 이름 설정</span>
+            </div>
+            <div class="modal-body">
+                <p style="font-size:12px; color:#718096; margin-top:0;">입력하신 이름이 내보내기 엑셀 파일명에 자동으로 적용됩니다.</p>
+                <input type="text" id="custom-title-input" class="edit-input">
+                <button class="btn-save" onclick="saveCustomTitle()">이름 저장하기</button>
+                <button class="modal-close" style="margin-top:0; background:#e2e8f0; color:#4a5568;" onclick="closeTitleModal()">취소</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="history-modal" class="modal-overlay">
+        <div class="modal-box">
+            <div class="modal-header">
+                <span id="modal-title">🗓️ 과거 기록 관리</span>
+            </div>
+            <div class="modal-body" id="modal-body"></div>
+            <button class="modal-close" onclick="closeHistoryModal()">창 닫기</button>
+        </div>
+    </div>
+
+    <script>
+        // 전체화면 기능 
+        function toggleFullScreen() {
+            let doc = window.document;
+            let docEl = doc.documentElement;
+            let requestFullScreen = docEl.requestFullscreen || docEl.mozRequestFullScreen || docEl.webkitRequestFullScreen || docEl.msRequestFullscreen;
+            let cancelFullScreen = doc.exitFullscreen || doc.mozCancelFullScreen || doc.webkitExitFullscreen || doc.msExitFullscreen;
+
+            if(!doc.fullscreenElement && !doc.mozFullScreenElement && !doc.webkitFullscreenElement && !doc.msFullscreenElement) {
+                if(requestFullScreen) {
+                    let p = requestFullScreen.call(docEl);
+                    if (p && typeof p.catch === 'function') {
+                        p.catch(err => alert("⚠️ 보안 정책 안내\n일반 브라우저 앱에서는 전체화면이 제한될 수 있습니다.\n주소창을 완벽히 없애려면 '홈 화면에 추가' 기능을 이용해 주세요!"));
+                    }
+                } else {
+                    alert("⚠️ 홈 화면에 추가 기능을 이용해 주세요!");
+                }
+            } else {
+                if(cancelFullScreen) cancelFullScreen.call(doc);
+            }
+        }
+
+        // 텍스트 에어리어 포커스 시 스크롤 위치 조정
+        const memoEl = document.getElementById('daily-memo');
+        memoEl.addEventListener('focus', function() {
+            setTimeout(() => { this.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 300); 
+        });
+
+        // 불필요한 바운스(스크롤) 차단 로직
+        document.addEventListener('touchmove', function(e) {
+            let target = e.target;
+            let isScrollable = false;
+            while(target && target !== document.body) {
+                if(target.id === 'grid-board' || target.classList.contains('modal-box')) {
+                    if (target.scrollHeight > target.clientHeight) isScrollable = true;
+                    break;
+                }
+                if(target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.tagName === 'SELECT') {
+                    isScrollable = true; break;
+                }
+                target = target.parentElement;
+            }
+            if(!isScrollable) e.preventDefault();
+        }, { passive: false });
+
+        let isDragging = false;
+        document.addEventListener('touchstart', () => { isDragging = false; }, { passive: true });
+        document.addEventListener('touchmove', () => { isDragging = true; }, { passive: true });
+        document.addEventListener('touchend', function(e) {
+            if (isDragging) return;
+            const tag = e.target.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.closest('label') || tag === 'OPTION') return;
+            e.preventDefault(); 
+            let clickable = e.target.closest('button') || e.target.closest('.seat-box') || e.target.closest('.main-title');
+            if (clickable) clickable.click();
+        }, { passive: false });
+
+        // 전역 데이터
+        let studentMap = {};    
+        let attendedState = {};
+        let hasLayout = false;
+        let currentFileDate = "";
+        let currentDisplayDate = "";
+        let currentGradePrefix = ""; 
+
+        // 오늘 날짜 키(YYYYMMDD) 반환
+        function todayKey() {
+            let d = new Date();
+            return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+        }
+
+        // 상태 표시줄(pill)을 '오늘' 모드로 설정
+        function setInfoStatusToday() {
+            let el = document.getElementById('info-status');
+            if (!el) return;
+            let d = new Date();
+            const days = ['일','월','화','수','목','금','토'];
+            el.innerText = `📅 ${d.getMonth()+1}월 ${d.getDate()}일(${days[d.getDay()]}) 오늘`;
+            el.style.background = '#e8f5e9';
+            el.style.color = '#27ae60';
+        }
+
+        // 과거/백업 모드 여부에 따라 헤더 UI(오늘로 돌아가기 버튼) 전환
+        function checkPastModeUI() {
+            let isPast = window.isBackupMode || (currentFileDate !== "" && currentFileDate !== todayKey());
+            const btnReturn = document.getElementById('btn-return-today');
+            if (btnReturn) btnReturn.style.display = isPast ? 'inline-block' : 'none';
+            let titleEl = document.getElementById('main-title');
+            if (titleEl) titleEl.style.color = isPast ? (window.isBackupMode ? "#8e44ad" : "#d35400") : "#2c3e50";
+        }
+
+        // 타이틀 관리
+        function openTitleModal() {
+            let current = document.getElementById('main-title').innerText.replace(' ✏️', '');
+            document.getElementById('custom-title-input').value = current;
+            document.getElementById('title-modal').style.display = 'flex';
+        }
+        function closeTitleModal() { document.getElementById('title-modal').style.display = 'none'; }
+        
+        function saveCustomTitle() {
+            let newTitle = document.getElementById('custom-title-input').value.trim();
+            if (newTitle) {
+                document.getElementById('main-title').innerText = newTitle + " ✏️";
+                localStorage.setItem('customRoomTitle_v2', newTitle);
+                updateGradePrefix(newTitle);
+            }
+            closeTitleModal();
+        }
+
+        function updateGradePrefix(titleText) {
+            let match = titleText.match(/(\d+).*?학년/);
+            if (match) {
+                currentGradePrefix = `${match[1]}학년_`;
+            } else if (titleText !== "태하관 자습실" && titleText !== "통합 자습실") {
+                currentGradePrefix = `${titleText}_`;
+            } else {
+                currentGradePrefix = "";
+            }
+        }
+
+        function updateMainTitle(filename) {
+            let titleEl = document.getElementById('main-title');
+            let foundGrade = null;
+            if (filename) {
+                let cleanName = filename;
+                try { cleanName = decodeURIComponent(filename); } catch(e){}
+                let match = cleanName.match(/(\d+)[)\]\s]*학년/);
+                if (match) foundGrade = match[1];
+            }
+            if (foundGrade) {
+                let newTitle = `${foundGrade}학년 자습실`;
+                titleEl.innerText = newTitle + " ✏️";
+                localStorage.setItem('customRoomTitle_v2', newTitle);
+                updateGradePrefix(newTitle);
+            } else {
+                let saved = localStorage.getItem('customRoomTitle_v2');
+                if (saved) {
+                    titleEl.innerText = saved + " ✏️";
+                    updateGradePrefix(saved);
+                } else {
+                    titleEl.innerText = "태하관 자습실 ✏️";
+                    currentGradePrefix = "";
+                }
+            }
+        }
+
+        function initTodayDate() {
+            let d = new Date();
+            const days = ['일', '월', '화', '수', '목', '금', '토'];
+            currentFileDate = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+            currentDisplayDate = `${d.getFullYear()}년 ${d.getMonth()+1}월 ${d.getDate()}일(${days[d.getDay()]})`;
+            window.isBackupMode = false;
+        }
+
+        // ⭐ 자동 초기화 로직 (심야자습 특성에 맞게 수정)
+        //   - 자정에 화면을 비우지 않음 → 자정을 넘겨 진행되는 심야자습 세션이 끊기지 않음
+        //   - 매일 오전 9시에 "하루"가 바뀌며, 이때만 새 날짜로 전환 + 화면 초기화
+        //   - 빈 데이터를 과거 날짜에 덮어쓰지 않음(불필요한 빈 기록 생성 방지)
+        function checkAutoClear() {
+            let now = new Date();
+            let resetTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 0, 0);
+            let lastClear = parseInt(localStorage.getItem('lastAutoClearTimestamp_v2') || '0');
+
+            // 오늘 오전 9시를 지났고, 아직 오늘 9시 초기화를 안 했다면 1회 실행
+            if (now.getTime() >= resetTime.getTime() && lastClear < resetTime.getTime()) {
+                localStorage.setItem('lastAutoClearTimestamp_v2', now.getTime().toString());
+
+                let tStr = todayKey();
+                // 표시 중인 날짜가 오늘이 아니면(=새 하루로 넘어옴) 새 날짜로 전환 후 화면 비움.
+                // 이미 오늘이면 데이터를 건드리지 않음(빈 기록 덮어쓰기 방지).
+                if (currentFileDate !== tStr) {
+                    initTodayDate();
+                    attendedState = {};
+                    document.getElementById('daily-memo').value = "";
+                    document.getElementById('daily-memo').disabled = false;
+                    setInfoStatusToday();
+                    checkPastModeUI();
+                    if (!window.isBackupMode && hasLayout) syncAttendance();
+                }
+            }
+        }
+
+        window.onload = function() {
+            initTodayDate();
+            const savedLayoutName = localStorage.getItem('smartLayoutFileName_v2');
+            updateMainTitle(savedLayoutName);
+            
+            // 화면 로드 시점에도 9시가 지났는지 체크하여 초기화 진행
+            checkAutoClear(); 
+            setInterval(checkAutoClear, 60000); 
+            
+            const savedLayout = localStorage.getItem('smartLayoutDB_v2');
+            if(savedLayout) {
+                const matrix = JSON.parse(savedLayout);
+                generateGrid(matrix); 
+                document.getElementById('info-layout').innerText = "✅ 로드됨";
+                document.getElementById('info-layout').classList.add('text-active');
+            }
+        };
+
+        // 배치도 엑셀 로드
+        document.getElementById('input-layout').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            localStorage.setItem('smartLayoutFileName_v2', file.name);
+            updateMainTitle(file.name);
+            
+            document.getElementById('info-layout').innerText = "✅ 로드됨";
+            document.getElementById('info-layout').classList.add('text-active');
+            
+            const reader = new FileReader();
+            reader.onload = function(evt) {
+                const data = new Uint8Array(evt.target.result);
+                const workbook = XLSX.read(data, {type: 'array'});
+                const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                const matrix = XLSX.utils.sheet_to_json(firstSheet, {header: 1, defval: ""});
+                
+                localStorage.setItem('smartLayoutDB_v2', JSON.stringify(matrix));
+                generateGrid(matrix);
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+        // 엑셀 데이터를 분석하여 통로 공간(빈칸)을 얇게 줄여 화면 낭비 방지
+        function generateGrid(matrix) {
+            const board = document.getElementById('grid-board');
+            board.innerHTML = "";
+            studentMap = {};
+            if (matrix.length === 0) return;
+            
+            const maxRows = matrix.length;
+            const maxCols = Math.max(...matrix.map(row => row.length));
+
+            let colTemplates = [];
+            for(let c = 0; c < maxCols; c++) {
+                let isColEmpty = true;
+                for(let r = 0; r < maxRows; r++) {
+                    if (matrix[r] && matrix[r][c] !== undefined && String(matrix[r][c]).trim() !== "") {
+                        isColEmpty = false; break;
+                    }
+                }
+                colTemplates.push(isColEmpty ? "minmax(10px, 0.25fr)" : "minmax(0, 1fr)");
+            }
+
+            let rowTemplates = [];
+            for(let r = 0; r < maxRows; r++) {
+                let isRowEmpty = true;
+                for(let c = 0; c < maxCols; c++) {
+                    if (matrix[r] && matrix[r][c] !== undefined && String(matrix[r][c]).trim() !== "") {
+                        isRowEmpty = false; break;
+                    }
+                }
+                rowTemplates.push(isRowEmpty ? "minmax(10px, 0.25fr)" : "minmax(0, 1fr)");
+            }
+
+            // 분석된 비율을 그리드에 적용
+            board.style.gridTemplateColumns = colTemplates.join(" ");
+            board.style.gridTemplateRows = rowTemplates.join(" ");
+
+            // 셀 생성
+            for (let r = 0; r < maxRows; r++) {
+                for (let c = 0; c < maxCols; c++) {
+                    const cell = matrix[r] && matrix[r][c] ? String(matrix[r][c]).trim() : "";
+                    
+                    if (cell === "") {
+                        const div = document.createElement('div');
+                        div.className = "passage";
+                        board.appendChild(div);
+                    } else if (cell === "빈자리" || cell === "공석") {
+                        const div = document.createElement('div');
+                        div.className = "empty-seat";
+                        div.innerText = "빈자리";
+                        board.appendChild(div);
+                    } else if (cell === "지도교사석" || cell === "출입문") {
+                        const div = document.createElement('div');
+                        div.className = "facility";
+                        div.innerText = cell;
+                        board.appendChild(div);
+                    } else {
+                        const tokens = cell.split(/\s+/);
+                        const id = tokens[0];
+                        const name = tokens[1] || "학생";
+                        
+                        const div = document.createElement('div');
+                        div.className = "seat-box"; 
+                        div.id = `seat-${id}`;
+                        div.setAttribute('onclick', `toggleAttendance('${id}')`);
+                        div.innerHTML = `<span class="s-id">${id}</span><span class="s-name">${name}</span><span class="s-tag" id="tag-${id}">부재</span>`;
+                        
+                        board.appendChild(div);
+                        studentMap[id] = { id: id, name: name, element: div };
+                    }
+                }
+            }
+            
+            hasLayout = true;
+            document.getElementById('btn-history').style.display = 'inline-block';
+            document.getElementById('stats-panel').style.display = 'flex';
+            document.getElementById('memo-container').style.display = 'flex'; 
+            
+            let history = JSON.parse(localStorage.getItem('smartAttendanceHistory_v2') || '{}');
+            if(history[currentFileDate] && !window.isBackupMode) {
+                attendedState = history[currentFileDate].attended || {};
+                document.getElementById('daily-memo').value = history[currentFileDate].dailyMemo || "";
+            } else if (!window.isBackupMode) {
+                attendedState = {};
+            }
+            if (!window.isBackupMode && currentFileDate === todayKey()) setInfoStatusToday();
+            checkPastModeUI();
+            syncAttendance();
+        }
+
+        function toggleAttendance(id) {
+            if(window.isBackupMode) {
+                alert("과거 기록 조회 모드에서는 상태를 변경할 수 없습니다."); return;
+            }
+            attendedState[id] = !attendedState[id]; // 상태 반전
+            saveToHistory();
+            syncAttendance();
+        }
+
+        function syncAttendance() {
+            if (Object.keys(studentMap).length === 0) return;
+            let counters = { total: 0, attended: 0, absent: 0 };
+
+            Object.keys(studentMap).forEach(id => {
+                counters.total++;
+                const isAttended = attendedState[id] || false;
+                const box = studentMap[id].element;
+                const tag = document.getElementById(`tag-${id}`);
+
+                if (isAttended) {
+                    counters.attended++;
+                    box.className = "seat-box status-attended";
+                    tag.innerText = "출석";
+                } else {
+                    counters.absent++;
+                    box.className = "seat-box"; 
+                    tag.innerText = "부재";
+                }
+            });
+
+            document.getElementById('stat-total').innerText = counters.total;
+            document.getElementById('stat-attended').innerText = counters.attended;
+            document.getElementById('stat-absent').innerText = counters.absent;
+        }
+
+        document.getElementById('daily-memo').addEventListener('input', function() {
+            if(!window.isBackupMode) saveToHistory();
+        });
+
+        function saveToHistory() {
+            if (!currentFileDate) initTodayDate();
+            let history = JSON.parse(localStorage.getItem('smartAttendanceHistory_v2') || '{}');
+            history[currentFileDate] = {
+                displayDate: currentDisplayDate,
+                attended: attendedState,
+                dailyMemo: document.getElementById('daily-memo').value
+            };
+            localStorage.setItem('smartAttendanceHistory_v2', JSON.stringify(history));
+        }
+
+        /* =======================================
+           과거 기록 관련 기능 (달력 UI / 최근 7일 / 폴더선택 저장 이식)
+           ======================================= */
+        function openHistoryModal() {
+            document.getElementById('modal-title').innerText = "🗓️ 과거 기록 조회 및 복원";
+            let history = JSON.parse(localStorage.getItem('smartAttendanceHistory_v2') || '{}');
+            let keys = Object.keys(history).sort().reverse();
+            let years = [...new Set(keys.map(k => k.substring(0,4)))];
+
+            // 1) 연도별 엑셀 백업 내보내기 + 백업 파일 불러오기(달력)
+            let html = `<div style="margin-bottom: 15px; padding: 12px; background: #e8f4fd; border-radius: 8px;">`;
+            html += `<div style="font-size: 13px; font-weight: bold; color: #2980b9; margin-bottom: 8px;">💾 연도별 백업 저장 (공유/내보내기)</div>`;
+            if(years.length > 0) {
+                html += `<div>`;
+                years.forEach(yr => { html += `<button class="export-btn" onclick="downloadHistoryExcel('${yr}')">📥 ${yr}년 백업 내보내기</button>`; });
+                html += `</div>`;
+            } else {
+                html += `<div style="font-size:12px; color:#7f8c8d;">저장된 기록이 없어 백업할 수 없습니다.</div>`;
+            }
+            html += `<hr style="border-top:1px dashed #b9d8ff; margin:10px 0;"><div style="font-size: 12px; color: #555; margin-bottom: 5px;">👇 보관 중인 엑셀 백업 파일을 엽니다.</div>`;
+            html += `<label for="backup-file-input" class="upload-label">📂 백업 엑셀 파일 불러오기</label><input type="file" id="backup-file-input" accept=".xlsx" onclick="this.value=null;" onchange="loadFromYearlyBackup(event)"></div>`;
+
+            // 2) 기기에 저장된 날짜 드롭다운
+            html += `<div style="margin-bottom: 15px; padding: 12px; background: #fdf2e9; border-radius: 8px;">`;
+            html += `<div style="font-size: 13px; font-weight: bold; color: #d35400; margin-bottom: 8px;">🔍 기기에 저장된 날짜 찾기</div>`;
+            if(keys.length > 0) {
+                let grouped = {};
+                keys.forEach(k => { let ym = k.substring(0,6); if(!grouped[ym]) grouped[ym] = []; grouped[ym].push(k); });
+                html += `<select id="local-date-select" class="native-select"><option value="">-- 과거 날짜를 선택하세요 --</option>`;
+                for(let ym in grouped) {
+                    let year = ym.substring(0,4), month = ym.substring(4,6);
+                    html += `<optgroup label="${year}년 ${parseInt(month,10)}월">`;
+                    grouped[ym].forEach(k => { html += `<option value="${k}">${history[k].displayDate}</option>`; });
+                    html += `</optgroup>`;
+                }
+                html += `</select><button class="load-btn" onclick="searchLocalHistoryByDropdown()">해당 날짜 불러오기</button>`;
+            } else {
+                html += `<div style="font-size:12px; color:#d35400;">저장된 과거 기록이 없습니다.</div>`;
+            }
+            html += `</div>`;
+
+            // 3) 최근 7일 빠른 조회
+            html += `<div style="font-size: 13px; font-weight: bold; color: #2c3e50; margin-bottom: 8px;">최근 7일 기기 저장 기록</div>`;
+            let recentKeys = keys.slice(0, 7);
+            if(recentKeys.length === 0) {
+                html += `<p style="text-align:center; color:#7f8c8d; font-size:12px; margin-top:20px;">저장된 기록이 없습니다.</p>`;
+            } else {
+                html += `<div style="max-height: 180px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 8px; padding: 5px;">`;
+                recentKeys.forEach(k => { html += `<button class="history-btn" onclick="loadHistoryData('${k}')">📅 ${history[k].displayDate}</button>`; });
+                html += `</div>`;
+            }
+
+            document.getElementById('modal-body').innerHTML = html;
+            document.getElementById('history-modal').style.display = 'flex';
+        }
+
+        function closeHistoryModal() { document.getElementById('history-modal').style.display = 'none'; }
+
+        // 엑셀 업로드 없이 오늘 날짜로 즉시 복귀
+        function returnToToday() {
+            initTodayDate();
+            let history = JSON.parse(localStorage.getItem('smartAttendanceHistory_v2') || '{}');
+            attendedState = (history[currentFileDate] && history[currentFileDate].attended) ? history[currentFileDate].attended : {};
+            let memoEl = document.getElementById('daily-memo');
+            memoEl.value = (history[currentFileDate] && history[currentFileDate].dailyMemo) ? history[currentFileDate].dailyMemo : "";
+            memoEl.disabled = false;
+            setInfoStatusToday();
+            checkPastModeUI();
+            if (hasLayout) syncAttendance();
+            closeHistoryModal();
+        }
+
+        function searchLocalHistoryByDropdown() {
+            let dStr = document.getElementById('local-date-select').value;
+            if(!dStr) { alert("날짜를 선택해 주세요."); return; }
+            let history = JSON.parse(localStorage.getItem('smartAttendanceHistory_v2') || '{}');
+            if(history[dStr]) { loadHistoryData(dStr); } else { alert("저장된 기록이 없습니다."); }
+        }
+
+        // 기기 저장 과거기록 불러오기 — 수정 가능 모드(해당 날짜 기록을 고쳐서 다시 저장 가능)
+        function loadHistoryData(dateKey) {
+            window.isBackupMode = false;
+            let history = JSON.parse(localStorage.getItem('smartAttendanceHistory_v2') || '{}');
+            if(!history[dateKey]) { alert("저장된 기록이 없습니다."); return; }
+            attendedState = history[dateKey].attended || {};
+            currentFileDate = dateKey;
+            currentDisplayDate = history[dateKey].displayDate;
+
+            let memoEl = document.getElementById('daily-memo');
+            memoEl.value = history[dateKey].dailyMemo || "";
+            // 오늘이면 수정 가능, 과거이면 조회 후 수정 가능(해당 날짜에 저장됨)
+            memoEl.disabled = false;
+
+            let statusEl = document.getElementById('info-status');
+            if (statusEl) {
+                if (dateKey === todayKey()) {
+                    setInfoStatusToday();
+                } else {
+                    statusEl.innerText = `🕰️ 과거: ${history[dateKey].displayDate.split('(')[0].trim()}`;
+                    statusEl.style.background = '#fcf3cf';
+                    statusEl.style.color = '#b9770e';
+                }
+            }
+            checkPastModeUI();
+            syncAttendance();
+            closeHistoryModal();
+        }
+
+        /* =======================================
+           엑셀 백업 저장 / 불러오기 (달력 UI)
+           ======================================= */
+        function downloadHistoryExcel(year) {
+            try {
+                let history = JSON.parse(localStorage.getItem('smartAttendanceHistory_v2') || '{}');
+                let keys = Object.keys(history).filter(k => k.startsWith(year)).sort();
+                let ws_data = [["시스템날짜", "날짜", "학번", "이름", "출석여부", "특이사항메모"]];
+                let studentIds = Object.keys(studentMap).sort();
+
+                keys.forEach(dateKey => {
+                    let record = history[dateKey];
+                    let displayDate = record.displayDate;
+                    let recordAttended = record.attended || {};
+                    let dailyMemo = record.dailyMemo || "";
+                    studentIds.forEach(id => {
+                        let name = studentMap[id] ? studentMap[id].name : "";
+                        let status = recordAttended[id] ? "출석" : "부재";
+                        ws_data.push([dateKey, displayDate, id, name, status, dailyMemo]);
+                    });
+                });
+
+                if(ws_data.length === 1) ws_data.push(["해당 연도에 기록된 내역이 없습니다."]);
+                let ws = XLSX.utils.aoa_to_sheet(ws_data);
+                ws['!cols'] = [{wch: 12}, {wch: 18}, {wch: 10}, {wch: 10}, {wch: 10}, {wch: 40}];
+                let wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, `${year}년_출결기록`);
+                let wbout = XLSX.write(wb, {bookType:'xlsx', type:'array'});
+
+                let now = new Date();
+                let timeStr = `${String(now.getMonth()+1).padStart(2,'0')}월${String(now.getDate()).padStart(2,'0')}일_${String(now.getHours()).padStart(2,'0')}시${String(now.getMinutes()).padStart(2,'0')}분`;
+                let fileName = `${currentGradePrefix}심야자습_출결기록_${year}년_백업(${timeStr}).xlsx`;
+                let blob = new Blob([wbout], {type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+
+                saveFileWithPicker(blob, fileName).then(result => {
+                    if (result.aborted) return;
+                    let folderMsg = result.fallback ? `📥 저장 위치: 다운로드 폴더` : `📁 선택한 폴더에 저장 완료`;
+                    alert(`성공적으로 백업되었습니다!\n\n파일명: [ ${fileName} ]\n${folderMsg}`);
+                });
+            } catch (e) { alert("엑셀 파일 생성 중 오류가 발생했습니다: " + e.message); }
+        }
+
+        // 모바일(안드로이드/iOS) 여부 — File System Access API 쓰기가 불안정한 환경
+        function isMobileDevice() {
+            try {
+                if (navigator.userAgentData && navigator.userAgentData.mobile) return true;
+            } catch(e) {}
+            let ua = navigator.userAgent || "";
+            // 안드로이드 태블릿은 UA에 'Mobile'이 없을 수 있으므로 'Android'도 포함
+            if (/Android|iPhone|iPad|iPod|Mobile|Silk|Kindle/i.test(ua)) return true;
+            // '데스크톱 모드'로 위장한 터치 태블릿 대응:
+            // 마우스(미세 포인터)가 없고 터치만 가능하면 모바일로 간주
+            try {
+                let coarseOnly = window.matchMedia &&
+                    window.matchMedia('(pointer: coarse)').matches &&
+                    !window.matchMedia('(pointer: fine)').matches;
+                if ((navigator.maxTouchPoints || 0) > 0 && coarseOnly) return true;
+            } catch(e) {}
+            return false;
+        }
+
+        // 파일 저장
+        //  - 데스크톱: showSaveFilePicker(폴더 선택) 사용. 실패 시 다운로드로 폴백.
+        //  - 모바일: 폴더 선택 API를 쓰지 않고 안정적인 Blob 다운로드 사용(0바이트/쓰기실패 방지).
+        async function saveFileWithPicker(blob, fileName) {
+            // blob에 실제 내용이 있는지 방어
+            if (!blob || blob.size === 0) {
+                alert("내부 오류: 저장할 데이터가 비어 있습니다. (0 bytes)\n다시 시도해 주세요.");
+                return { success: false, aborted: true };
+            }
+
+            let useFilePicker = (!isMobileDevice() && typeof window.showSaveFilePicker === 'function');
+            if (useFilePicker) {
+                try {
+                    const handle = await window.showSaveFilePicker({
+                        suggestedName: fileName,
+                        types: [{ description: 'Excel 파일', accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] } }]
+                    });
+                    const writable = await handle.createWritable();
+                    await writable.write(blob);
+                    await writable.close();
+                    return { success: true, savedName: handle.name };
+                } catch (e) {
+                    if (e && e.name === 'AbortError') return { success: false, aborted: true };
+                    // 그 외 오류(특히 모바일/권한 문제)는 아래 다운로드 방식으로 폴백
+                }
+            }
+
+            // Blob 다운로드 (모든 기기에서 동작)
+            // ⚠ 안드로이드는 다운로드가 시작되기 전 URL을 회수하면 0바이트로 잘리므로 회수를 충분히 지연
+            let url = window.URL.createObjectURL(blob);
+            let a = document.createElement("a");
+            a.style.display = "none";
+            a.href = url;
+            a.download = fileName;
+            a.rel = "noopener";
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => {
+                try { document.body.removeChild(a); } catch(e) {}
+                window.URL.revokeObjectURL(url);
+            }, 15000); // 15초 후 회수: 저속 태블릿에서도 다운로드 완료 보장
+            return { success: true, savedName: fileName, fallback: true };
+        }
+
+        // 헤더 텍스트 정규화(모든 공백 제거) — 엑셀 편집으로 생긴 공백/줄바꿈 차이 흡수
+        // 헤더 텍스트 정규화(모든 공백 제거) — 엑셀 편집으로 생긴 공백/줄바꿈 차이 흡수
+        function normHeader(v){ return String(v==null?"":v).replace(/\s+/g,'').trim(); }
+        function pad2(n){ return String(n).padStart(2,'0'); }
+
+        // 첫 시트를 행렬로 변환(완전 빈 행 제거). 워크북이 비면 [] 반환
+        function readFirstSheetMatrix(wb){
+            if(!wb || !wb.SheetNames || !wb.SheetNames.length) return [];
+            let sheet = wb.Sheets[wb.SheetNames[0]];
+            if(!sheet) return [];
+            return XLSX.utils.sheet_to_json(sheet, {header: 1, defval: "", blankrows: false});
+        }
+
+        // 행렬 전체(상위 충분히)에서 헤더 행과 컬럼 위치를 찾아낸다
+        function findBackupHeader(matrix) {
+            const idNames     = ["학번","번호"];
+            const dateNames   = ["날짜","일자"];
+            const sysNames    = ["시스템날짜"];
+            const statusNames = ["출석여부","출결","상태"];
+            const memoNames   = ["특이사항메모","전체특이사항메모","개별수동메모","특이사항","메모"];
+            const pick = (map, names) => { for(const n of names) if(n in map) return map[n]; return undefined; };
+
+            let scan = Math.min(matrix.length, 30); // 빈 행 제거 후 헤더는 최상단 근처 → 30행이면 충분
+            for(let r=0; r<scan; r++){
+                let row = matrix[r] || [];
+                let map = {};
+                for(let c=0; c<row.length; c++){ let h = normHeader(row[c]); if(h) map[h] = c; }
+                let idCol  = pick(map, idNames);
+                let dCol   = pick(map, dateNames);
+                let sCol   = pick(map, sysNames);
+                if(idCol !== undefined && (dCol !== undefined || sCol !== undefined)){
+                    return { rowIdx: r, id: idCol, date: dCol, sysdate: sCol,
+                             status: pick(map, statusNames), memo: pick(map, memoNames) };
+                }
+            }
+            return null;
+        }
+
+        function loadFromYearlyBackup(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            // 안드로이드 클라우드(온라인 전용) 파일/동기화 미완료 → 0바이트 방어
+            if (file.size === 0) {
+                alert("선택한 파일의 크기가 0바이트입니다.\n\n클라우드(Google Drive·OneDrive 등)의 '온라인 전용' 파일이거나\n다운로드(동기화)가 끝나지 않았을 수 있어요.\n기기에 실제로 내려받은 파일을 선택해 주세요.\n\n파일명: " + file.name);
+                event.target.value = ""; return;
+            }
+
+            const reader = new FileReader();
+            reader.onerror = function() {
+                alert("파일을 읽지 못했습니다. 다시 시도해 주세요.\n\n파일명: " + file.name);
+                event.target.value = "";
+            };
+            reader.onload = function(evt) {
+                let matrix = [];
+                let diag = `파일명: ${file.name}\n크기: ${file.size.toLocaleString()} bytes`;
+                let bytesLen = 0, sheetCount = 0, sheet0 = "";
+
+                // 1차 시도: array 방식
+                try {
+                    const bytes = new Uint8Array(evt.target.result);
+                    bytesLen = bytes.length;
+                    const wb = XLSX.read(bytes, {type: 'array'});
+                    sheetCount = (wb.SheetNames || []).length;
+                    sheet0 = (wb.SheetNames && wb.SheetNames[0]) ? wb.SheetNames[0] : "";
+                    matrix = readFirstSheetMatrix(wb);
+                } catch (e1) {
+                    diag += `\n[array 읽기 오류] ${e1.message}`;
+                }
+
+                // 2차 시도(1차가 비었을 때): binary 방식 — 일부 안드로이드 WebView 대응
+                if (!matrix || matrix.length === 0) {
+                    try {
+                        const bytes = new Uint8Array(evt.target.result);
+                        let bin = "";
+                        const CHUNK = 0x8000;
+                        for (let i = 0; i < bytes.length; i += CHUNK) {
+                            bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+                        }
+                        const wb2 = XLSX.read(bin, {type: 'binary'});
+                        if (!sheetCount) { sheetCount = (wb2.SheetNames || []).length; sheet0 = (wb2.SheetNames && wb2.SheetNames[0]) ? wb2.SheetNames[0] : ""; }
+                        let m2 = readFirstSheetMatrix(wb2);
+                        if (m2 && m2.length) { matrix = m2; diag += `\n(binary 방식으로 재읽기 성공)`; }
+                    } catch (e2) {
+                        diag += `\n[binary 읽기 오류] ${e2.message}`;
+                    }
+                }
+
+                diag += `\n읽은 바이트: ${bytesLen} / 시트수: ${sheetCount} / 첫시트: '${sheet0}' / 행수: ${matrix.length}`;
+
+                let info = findBackupHeader(matrix);
+                if(!info){
+                    // 헤더를 못 찾았을 때, 데이터가 들어있는 첫 줄을 찾아 함께 표시(원인 파악용)
+                    let sampleRow = "";
+                    for(let r=0; r<Math.min(matrix.length, 30); r++){
+                        let cells = (matrix[r] || []).map(x => String(x).trim()).filter(x => x);
+                        if(cells.length){ sampleRow = `${r+1}행: ` + cells.slice(0, 8).join(", "); break; }
+                    }
+                    if(!sampleRow) sampleRow = "(데이터가 있는 행이 없음)";
+
+                    alert("백업 엑셀 양식을 인식하지 못했습니다.\n\n📄 파일에서 찾은 내용:\n" + sampleRow +
+                          "\n\n[기술 정보]\n" + diag +
+                          "\n\n※ '배치도' 엑셀이 아니라, [🗓️ 과거 기록] → [📥 연도별 백업 내보내기]로 저장한 파일을 선택해 주세요.\n" +
+                          "※ 필수 항목: '학번' + ('날짜' 또는 '시스템날짜')");
+                    event.target.value = ""; return;
+                }
+
+                window.tempBackupData = {};
+                window.tempBackupDisplayDates = {};
+
+                for(let i = info.rowIdx + 1; i < matrix.length; i++){
+                    let row = matrix[i] || [];
+
+                    let dateKey = "", dispDate = "";
+                    if(info.sysdate !== undefined){
+                        let sv = String(row[info.sysdate] || "").trim();
+                        if(/^\d{8}$/.test(sv)) dateKey = sv;
+                    }
+                    let rawDisp = (info.date !== undefined) ? String(row[info.date] || "").trim() : "";
+                    if(rawDisp) dispDate = rawDisp;
+                    if(!dateKey && rawDisp){
+                        let m = rawDisp.match(/(\d{4})[년.\-\/]?\s*(\d{1,2})[월.\-\/]?\s*(\d{1,2})/);
+                        if(m) dateKey = m[1] + pad2(m[2]) + pad2(m[3]);
+                    }
+                    if(!dateKey || dateKey.includes("기록된")) continue;
+
+                    let id = String(row[info.id] || "").trim();
+                    if(!id) continue;
+
+                    if(!window.tempBackupData[dateKey]){
+                        window.tempBackupData[dateKey] = { attended: {}, memo: "" };
+                        window.tempBackupDisplayDates[dateKey] = dispDate || `${dateKey.substring(0,4)}년 ${parseInt(dateKey.substring(4,6))}월 ${parseInt(dateKey.substring(6,8))}일`;
+                    }
+                    let status = (info.status !== undefined) ? String(row[info.status] || "").trim() : "";
+                    window.tempBackupData[dateKey].attended[id] = (status === "출석" || status === "O" || status === "o" || status === "1");
+                    if(info.memo !== undefined){
+                        let memo = String(row[info.memo] || "").trim();
+                        if(memo && !window.tempBackupData[dateKey].memo) window.tempBackupData[dateKey].memo = memo;
+                    }
+                }
+
+                let dates = Object.keys(window.tempBackupData).sort().reverse();
+                if(dates.length === 0){ alert("파일은 정상 인식되었으나, 복원할 출결 데이터가 없습니다."); event.target.value = ""; return; }
+
+                window.backupAvailableDates = dates;
+                let initialDateStr = dates[0];
+                let initialYear  = parseInt(initialDateStr.substring(0, 4));
+                let initialMonth = parseInt(initialDateStr.substring(4, 6));
+
+                document.getElementById('modal-title').innerText = "📂 복원할 날짜 선택";
+                renderBackupCalendar(initialYear, initialMonth);
+                event.target.value = "";
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function renderBackupCalendar(year, month) {
+            let availableDates = window.backupAvailableDates || [];
+            let firstDay = new Date(year, month - 1, 1).getDay();
+            let daysInMonth = new Date(year, month, 0).getDate();
+
+            let html = `<div class="cal-header">
+                <button class="cal-nav-btn" onclick="changeBackupCalendarMonth(${year}, ${month}, -1)">◀ 이전</button>
+                <span>${year}년 ${month}월</span>
+                <button class="cal-nav-btn" onclick="changeBackupCalendarMonth(${year}, ${month}, 1)">다음 ▶</button>
+            </div>`;
+
+            html += `<div class="cal-grid">`;
+            const dayNames = ['일','월','화','수','목','금','토'];
+            dayNames.forEach((d, i) => {
+                let colorClass = i === 0 ? 'cal-sun' : (i === 6 ? 'cal-sat' : '');
+                html += `<div class="cal-day-header ${colorClass}">${d}</div>`;
+            });
+
+            for (let i = 0; i < firstDay; i++) html += `<div></div>`;
+
+            for (let d = 1; d <= daysInMonth; d++) {
+                let dStr = `${year}${String(month).padStart(2,'0')}${String(d).padStart(2,'0')}`;
+                let hasData = availableDates.includes(dStr);
+                let dow = new Date(year, month - 1, d).getDay();
+                if (hasData) {
+                    // 데이터가 있는 날: 터치 반응이 확실한 <button>으로 생성 + data 속성으로도 이중 연결
+                    html += `<button type="button" class="cal-day has-data" data-backup-date="${dStr}">${d}</button>`;
+                } else {
+                    let colorStyle = "";
+                    if(dow === 0) colorStyle = "style='color:#fc8181;'";
+                    if(dow === 6) colorStyle = "style='color:#63b3ed;'";
+                    html += `<div class="cal-day" ${colorStyle}>${d}</div>`;
+                }
+            }
+            html += `</div>`;
+            html += `<div style="margin-top:20px; font-size:13px; color:#718096; text-align:center; background:#f8fafc; padding:10px; border-radius:8px;">
+                💡 <b>파란색</b>으로 활성화된 날짜를 터치하면<br>해당 일자의 출결 상태가 즉시 복원됩니다.
+            </div>`;
+            let mb = document.getElementById('modal-body');
+            mb.innerHTML = html;
+            // 안전망: 인라인 onclick이 막히는 환경 대비, 위임 방식으로도 처리(중복 등록 방지)
+            if (!mb.dataset.calBound) {
+                mb.addEventListener('click', function(ev) {
+                    let cell = ev.target.closest && ev.target.closest('[data-backup-date]');
+                    if (cell) renderBackupDate(cell.getAttribute('data-backup-date'));
+                });
+                mb.dataset.calBound = "1";
+            }
+        }
+
+        function changeBackupCalendarMonth(year, month, delta) {
+            let newMonth = month + delta, newYear = year;
+            if (newMonth < 1) { newMonth = 12; newYear--; }
+            else if (newMonth > 12) { newMonth = 1; newYear++; }
+            renderBackupCalendar(newYear, newMonth);
+        }
+
+        // 엑셀 백업 복원 — 조회 전용(읽기 모드, 수정 불가)
+        function renderBackupDate(dateStr) {
+            let record = window.tempBackupData ? window.tempBackupData[dateStr] : null;
+            if (!record) { alert("선택한 날짜의 데이터를 찾을 수 없습니다."); return; }
+            window.isBackupMode = true;
+            attendedState = record.attended || {};
+            currentDisplayDate = window.tempBackupDisplayDates[dateStr] || `${dateStr.substring(0,4)}년 ${parseInt(dateStr.substring(4,6))}월 ${parseInt(dateStr.substring(6,8))}일`;
+
+            let memoEl = document.getElementById('daily-memo');
+            memoEl.value = record.memo || "";
+            memoEl.disabled = true;
+
+            let statusEl = document.getElementById('info-status');
+            if (statusEl) {
+                let dispShort = currentDisplayDate.split('(')[0].trim();
+                statusEl.innerText = `📂 복원: ${dispShort}`;
+                statusEl.style.background = '#f4ecf7';
+                statusEl.style.color = '#8e44ad';
+            }
+            checkPastModeUI();
+            syncAttendance();
+            closeHistoryModal();
+            alert(`📂 [엑셀 기록 조회]\n${currentDisplayDate} 기록을 표시합니다.\n조회 모드에서는 수정이 불가능합니다.`);
+        }
+
+    </script>
+</body>
+</html>
