@@ -1,5 +1,5 @@
 // sw.js - 태하관심야자습출석부v1 Service Worker
-const CACHE_NAME = 'taehagwan-night-v1';
+const CACHE_NAME = 'taehagwan-night-v2';
 const ASSETS = [
   './index.html',
   './manifest.json',
