@@ -595,18 +595,32 @@
             let keys = Object.keys(history).sort().reverse();
             let years = [...new Set(keys.map(k => k.substring(0,4)))];
 
-            // 1) 연도별 엑셀 백업 내보내기 + 백업 파일 불러오기(달력)
-            let html = `<div style="margin-bottom: 15px; padding: 12px; background: #e8f4fd; border-radius: 8px;">`;
-            html += `<div style="font-size: 13px; font-weight: bold; color: #2980b9; margin-bottom: 8px;">💾 연도별 백업 저장 (공유/내보내기)</div>`;
-            if(years.length > 0) {
-                html += `<div>`;
-                years.forEach(yr => { html += `<button class="export-btn" onclick="downloadHistoryExcel('${yr}')">📥 ${yr}년 백업 내보내기</button>`; });
-                html += `</div>`;
-            } else {
-                html += `<div style="font-size:12px; color:#7f8c8d;">저장된 기록이 없어 백업할 수 없습니다.</div>`;
-            }
-            html += `<hr style="border-top:1px dashed #b9d8ff; margin:10px 0;"><div style="font-size: 12px; color: #555; margin-bottom: 5px;">👇 보관 중인 엑셀 백업 파일을 엽니다.</div>`;
-            html += `<label for="backup-file-input" class="upload-label">📂 백업 엑셀 파일 불러오기</label><input type="file" id="backup-file-input" accept=".xlsx" onclick="this.value=null;" onchange="loadFromYearlyBackup(event)"></div>`;
+            // [v1.1] 백업 섹션 (JSON 전체백업·복원 / 구글드라이브 / 엑셀 보고용)
+            let html = '';
+            html += `<div style="margin-bottom:14px; padding:13px; background:#eef7ff; border-radius:10px; border:1px solid #aacfee;">`;
+            html += `<div style="font-size:14px; font-weight:900; color:#1864ab; margin-bottom:6px;">💾 전체 백업 · 복원 (.json)</div>`;
+            html += `<div style="font-size:12px; color:#5a6b7b; margin-bottom:10px; line-height:1.5;">모든 날짜 출결·배치도·메모가 파일 1개로 저장됩니다. 기기 교체/초기화 시 이 파일로 전체 복구하세요.</div>`;
+            html += `<button class="export-btn" style="background:#1971c2; color:#fff;" onclick="doNightBackup()">📥 전체 백업 내보내기 (.json)</button>`;
+            html += `<button class="history-btn" onclick="document.getElementById('ns-restore-file').click()">📂 백업 복원 (.json)</button></div>`;
+
+            html += `<div style="margin-bottom:14px; padding:13px; background:#f1f9f3; border-radius:10px; border:1px solid #b7e0c0;">`;
+            html += `<div style="font-size:14px; font-weight:900; color:#2b8a3e; margin-bottom:6px;">☁️ 구글 드라이브 자동 백업</div>`;
+            html += `<div id="gd-status" style="font-size:12px; color:#5a6b7b; margin-bottom:10px; line-height:1.6;"></div>`;
+            html += `<button class="export-btn" style="background:#4285F4; color:#fff;" onclick="driveBackupNow(true)">☁️ 지금 드라이브로 백업</button>`;
+            html += `<button class="history-btn" onclick="toggleDriveSettings()">⚙️ 드라이브 연결 설정 열기 / 닫기</button>`;
+            html += `<div id="gd-settings-panel" style="display:none; margin-top:10px; background:#fff; border:1px solid #d0d8e0; border-radius:10px; padding:12px; text-align:left;">`;
+            html += `<div style="font-size:12px; color:#5a6b7b; line-height:1.6; margin-bottom:8px;">📁 <b>${nsEsc(NS_TITLE)}_백업</b> 폴더에 <b>최신.json</b> + <b>날짜별 1개</b>가 저장되고, 보관 일수가 지난 파일은 자동 삭제됩니다. <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color:#1971c2;">구글 클라이언트 ID 발급</a></div>`;
+            html += `<label style="font-size:12px; font-weight:bold;">OAuth 클라이언트 ID</label>`;
+            html += `<input id="gd-clientid" placeholder="xxxxx.apps.googleusercontent.com" oninput="saveDriveClientId()" style="width:100%; padding:9px; border:1.5px solid #cbd5e0; border-radius:8px; margin:5px 0 10px; box-sizing:border-box;">`;
+            html += `<div style="display:flex; gap:8px; align-items:flex-end; margin-bottom:10px;">`;
+            html += `<div style="flex:1;"><label style="font-size:12px; font-weight:bold;">보관 일수</label><select id="gd-keepdays" onchange="saveDriveKeepDays()" style="width:100%; padding:9px; border:1.5px solid #cbd5e0; border-radius:8px; margin-top:5px;"><option value="7">7일</option><option value="14">14일</option><option value="30" selected>30일</option><option value="60">60일</option><option value="90">90일</option></select></div>`;
+            html += `<button class="export-btn" style="flex:1; background:#2b8a3e; color:#fff; margin:0;" onclick="driveConnect()">🔗 구글 연결</button></div>`;
+            html += `<label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13px;"><input type="checkbox" id="gd-auto" onchange="toggleDriveAuto()" style="width:18px; height:18px;"> 앱을 켤 때 자동으로 드라이브에 백업</label></div></div>`;
+
+            html += `<div style="margin-bottom:15px; padding:13px; background:#fff7e6; border-radius:10px; border:1px solid #ffd591;">`;
+            html += `<div style="font-size:14px; font-weight:900; color:#d9480f; margin-bottom:6px;">📊 엑셀 내보내기 (보고용)</div>`;
+            html += `<div style="font-size:12px; color:#8a6d3b; margin-bottom:10px; line-height:1.5;">전체 기간 출결·특이사항을 엑셀로 정리합니다. 보고·공유용입니다.</div>`;
+            html += `<button class="export-btn" style="background:#e8590c; color:#fff; margin:0;" onclick="exportNightXlsx()">📊 엑셀로 내보내기 (.xlsx)</button></div>`;
 
             // 2) 기기에 저장된 날짜 드롭다운
             html += `<div style="margin-bottom: 15px; padding: 12px; background: #fdf2e9; border-radius: 8px;">`;
@@ -640,6 +654,7 @@
 
             document.getElementById('modal-body').innerHTML = html;
             document.getElementById('history-modal').style.display = 'flex';
+            renderDriveStatus();
         }
 
         function closeHistoryModal() { document.getElementById('history-modal').style.display = 'none'; }
@@ -697,346 +712,227 @@
         /* =======================================
            엑셀 백업 저장 / 불러오기 (달력 UI)
            ======================================= */
-        function downloadHistoryExcel(year) {
-            try {
-                let history = JSON.parse(localStorage.getItem('smartAttendanceHistory_v2') || '{}');
-                let keys = Object.keys(history).filter(k => k.startsWith(year)).sort();
-                let ws_data = [["시스템날짜", "날짜", "학번", "이름", "출석여부", "특이사항메모"]];
-                let studentIds = Object.keys(studentMap).sort();
 
-                keys.forEach(dateKey => {
-                    let record = history[dateKey];
-                    let displayDate = record.displayDate;
-                    let recordAttended = record.attended || {};
-                    let dailyMemo = record.dailyMemo || "";
-                    studentIds.forEach(id => {
-                        let name = studentMap[id] ? studentMap[id].name : "";
-                        let status = recordAttended[id] ? "출석" : "부재";
-                        ws_data.push([dateKey, displayDate, id, name, status, dailyMemo]);
-                    });
-                });
-
-                if(ws_data.length === 1) ws_data.push(["해당 연도에 기록된 내역이 없습니다."]);
-                let ws = XLSX.utils.aoa_to_sheet(ws_data);
-                ws['!cols'] = [{wch: 12}, {wch: 18}, {wch: 10}, {wch: 10}, {wch: 10}, {wch: 40}];
-                let wb = XLSX.utils.book_new();
-                XLSX.utils.book_append_sheet(wb, ws, `${year}년_출결기록`);
-                let wbout = XLSX.write(wb, {bookType:'xlsx', type:'array'});
-
-                let now = new Date();
-                let timeStr = `${String(now.getMonth()+1).padStart(2,'0')}월${String(now.getDate()).padStart(2,'0')}일_${String(now.getHours()).padStart(2,'0')}시${String(now.getMinutes()).padStart(2,'0')}분`;
-                let fileName = `${currentGradePrefix}심야자습_출결기록_${year}년_백업(${timeStr}).xlsx`;
-                let blob = new Blob([wbout], {type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
-
-                saveFileWithPicker(blob, fileName).then(result => {
-                    if (result.aborted) return;
-                    let folderMsg = result.fallback ? `📥 저장 위치: 다운로드 폴더` : `📁 선택한 폴더에 저장 완료`;
-                    alert(`성공적으로 백업되었습니다!\n\n파일명: [ ${fileName} ]\n${folderMsg}`);
-                });
-            } catch (e) { alert("엑셀 파일 생성 중 오류가 발생했습니다: " + e.message); }
-        }
-
-        // 모바일(안드로이드/iOS) 여부 — File System Access API 쓰기가 불안정한 환경
-        function isMobileDevice() {
-            try {
-                if (navigator.userAgentData && navigator.userAgentData.mobile) return true;
-            } catch(e) {}
-            let ua = navigator.userAgent || "";
-            // 안드로이드 태블릿은 UA에 'Mobile'이 없을 수 있으므로 'Android'도 포함
-            if (/Android|iPhone|iPad|iPod|Mobile|Silk|Kindle/i.test(ua)) return true;
-            // '데스크톱 모드'로 위장한 터치 태블릿 대응:
-            // 마우스(미세 포인터)가 없고 터치만 가능하면 모바일로 간주
-            try {
-                let coarseOnly = window.matchMedia &&
-                    window.matchMedia('(pointer: coarse)').matches &&
-                    !window.matchMedia('(pointer: fine)').matches;
-                if ((navigator.maxTouchPoints || 0) > 0 && coarseOnly) return true;
-            } catch(e) {}
-            return false;
-        }
-
-        // 파일 저장
-        //  - 데스크톱: showSaveFilePicker(폴더 선택) 사용. 실패 시 다운로드로 폴백.
-        //  - 모바일: 폴더 선택 API를 쓰지 않고 안정적인 Blob 다운로드 사용(0바이트/쓰기실패 방지).
-        async function saveFileWithPicker(blob, fileName) {
-            // blob에 실제 내용이 있는지 방어
-            if (!blob || blob.size === 0) {
-                alert("내부 오류: 저장할 데이터가 비어 있습니다. (0 bytes)\n다시 시도해 주세요.");
-                return { success: false, aborted: true };
+        // =========================================================
+        // [v1.1] 백업 시스템 (기숙사관리일지 v1_3 방식 이식)
+        //  · JSON 전체 백업/복원  · 구글 드라이브 자동 백업  · 엑셀 내보내기(보고용)
+        //  심야자습의 모든 _v2 키를 통째로 저장 → 2실(A/B) 구조도 자동 포함
+        // =========================================================
+        const NS_TITLE = "태하관 심야자습";
+        const NS_PREFIXES = ['smartAttendanceHistory_v2','smartLayoutDB_v2','smartLayoutFileName_v2','customRoomTitle_v2','lastAutoClearTimestamp_v2','nightStudyTheme'];
+        function nsBackupKeys(){
+            const arr=[];
+            for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i);
+                if(!k) continue;
+                if(k==='nightStudyDriveCfg' || NS_PREFIXES.some(p=>k.startsWith(p))) arr.push(k);
             }
-
-            let useFilePicker = (!isMobileDevice() && typeof window.showSaveFilePicker === 'function');
-            if (useFilePicker) {
-                try {
-                    const handle = await window.showSaveFilePicker({
-                        suggestedName: fileName,
-                        types: [{ description: 'Excel 파일', accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] } }]
-                    });
-                    const writable = await handle.createWritable();
-                    await writable.write(blob);
-                    await writable.close();
-                    return { success: true, savedName: handle.name };
-                } catch (e) {
-                    if (e && e.name === 'AbortError') return { success: false, aborted: true };
-                    // 그 외 오류(특히 모바일/권한 문제)는 아래 다운로드 방식으로 폴백
-                }
-            }
-
-            // Blob 다운로드 (모든 기기에서 동작)
-            // ⚠ 안드로이드는 다운로드가 시작되기 전 URL을 회수하면 0바이트로 잘리므로 회수를 충분히 지연
-            let url = window.URL.createObjectURL(blob);
-            let a = document.createElement("a");
-            a.style.display = "none";
-            a.href = url;
-            a.download = fileName;
-            a.rel = "noopener";
-            document.body.appendChild(a);
-            a.click();
-            setTimeout(() => {
-                try { document.body.removeChild(a); } catch(e) {}
-                window.URL.revokeObjectURL(url);
-            }, 15000); // 15초 후 회수: 저속 태블릿에서도 다운로드 완료 보장
-            return { success: true, savedName: fileName, fallback: true };
+            return arr;
+        }
+        function nsTodayStr(){const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");}
+        function nsStamp(){const d=new Date();return d.getFullYear()+String(d.getMonth()+1).padStart(2,"0")+String(d.getDate()).padStart(2,"0")+"_"+String(d.getHours()).padStart(2,"0")+String(d.getMinutes()).padStart(2,"0");}
+        function nsEsc(s){return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+        function nsToast(msg){
+            let t=document.getElementById('ns-toast');
+            if(!t){t=document.createElement('div');t.id='ns-toast';
+                t.style.cssText='position:fixed;left:50%;bottom:80px;transform:translateX(-50%);background:#1d2433;color:#fff;padding:12px 20px;border-radius:10px;font-size:14px;font-weight:bold;z-index:99999;box-shadow:0 6px 20px rgba(0,0,0,.3);max-width:90%;text-align:center;';
+                document.body.appendChild(t);}
+            t.textContent=msg; t.style.display='block'; clearTimeout(t._tm); t._tm=setTimeout(()=>{t.style.display='none';},2600);
+        }
+        function buildNightBackup(){
+            const store={}; nsBackupKeys().forEach(k=>{ const v=localStorage.getItem(k); if(v!==null) store[k]=v; });
+            return { _app:'nightStudyAttendance', _ver:1, title:NS_TITLE, exportedAt:new Date().toISOString(), store };
+        }
+        function countNightDays(){
+            let n=0; for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i);
+                if(k&&k.startsWith('smartAttendanceHistory_v2')){ try{ n+=Object.keys(JSON.parse(localStorage.getItem(k)||'{}')).length; }catch(e){} } }
+            return n;
         }
 
-        // 헤더 텍스트 정규화(모든 공백 제거) — 엑셀 편집으로 생긴 공백/줄바꿈 차이 흡수
-        // 헤더 텍스트 정규화(모든 공백 제거) — 엑셀 편집으로 생긴 공백/줄바꿈 차이 흡수
-        function normHeader(v){ return String(v==null?"":v).replace(/\s+/g,'').trim(); }
-        function pad2(n){ return String(n).padStart(2,'0'); }
-
-        // 첫 시트를 행렬로 변환(완전 빈 행 제거). 워크북이 비면 [] 반환
-        function readFirstSheetMatrix(wb){
-            if(!wb || !wb.SheetNames || !wb.SheetNames.length) return [];
-            let sheet = wb.Sheets[wb.SheetNames[0]];
-            if(!sheet) return [];
-            return XLSX.utils.sheet_to_json(sheet, {header: 1, defval: "", blankrows: false});
+        // ── 1) JSON 전체 백업 내보내기 (수동 백업) ──
+        function doNightBackup(){
+            const blob=new Blob([JSON.stringify(buildNightBackup())],{type:'application/json'});
+            const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+            a.download=`${NS_TITLE}_백업_${nsStamp()}.json`; a.click(); URL.revokeObjectURL(a.href);
+            nsToast(`백업 완료 (저장된 날짜 ${countNightDays()}일)`);
+        }
+        // ── JSON 백업 복원 ──
+        function doNightRestore(ev){
+            const f=ev.target.files[0]; if(!f)return;
+            const rd=new FileReader();
+            rd.onload=e=>{ try{
+                const d=JSON.parse(e.target.result);
+                if(!d || d._app!=='nightStudyAttendance' || !d.store){ nsToast('올바른 심야자습 백업 파일이 아닙니다'); ev.target.value=''; return; }
+                let dayCnt=0; Object.keys(d.store).filter(k=>k.startsWith('smartAttendanceHistory_v2')).forEach(k=>{ try{ dayCnt+=Object.keys(JSON.parse(d.store[k])).length; }catch(e){} });
+                if(!confirm(`이 백업으로 복원할까요?\n저장된 날짜 ${dayCnt}일 · 현재 기기 내용은 대체됩니다.`)){ ev.target.value=''; return; }
+                nsBackupKeys().forEach(k=>localStorage.removeItem(k));
+                Object.keys(d.store).forEach(k=>localStorage.setItem(k, d.store[k]));
+                nsToast('복원 완료 — 화면을 새로고침합니다');
+                setTimeout(()=>location.reload(), 900);
+            }catch(err){ nsToast('복원 실패: 파일을 확인하세요'); }
+            ev.target.value=''; };
+            rd.readAsText(f);
         }
 
-        // 행렬 전체(상위 충분히)에서 헤더 행과 컬럼 위치를 찾아낸다
-        function findBackupHeader(matrix) {
-            const idNames     = ["학번","번호"];
-            const dateNames   = ["날짜","일자"];
-            const sysNames    = ["시스템날짜"];
-            const statusNames = ["출석여부","출결","상태"];
-            const memoNames   = ["특이사항메모","전체특이사항메모","개별수동메모","특이사항","메모"];
-            const pick = (map, names) => { for(const n of names) if(n in map) return map[n]; return undefined; };
-
-            let scan = Math.min(matrix.length, 30); // 빈 행 제거 후 헤더는 최상단 근처 → 30행이면 충분
-            for(let r=0; r<scan; r++){
-                let row = matrix[r] || [];
-                let map = {};
-                for(let c=0; c<row.length; c++){ let h = normHeader(row[c]); if(h) map[h] = c; }
-                let idCol  = pick(map, idNames);
-                let dCol   = pick(map, dateNames);
-                let sCol   = pick(map, sysNames);
-                if(idCol !== undefined && (dCol !== undefined || sCol !== undefined)){
-                    return { rowIdx: r, id: idCol, date: dCol, sysdate: sCol,
-                             status: pick(map, statusNames), memo: pick(map, memoNames) };
-                }
-            }
-            return null;
-        }
-
-        function loadFromYearlyBackup(event) {
-            const file = event.target.files[0];
-            if (!file) return;
-
-            // 안드로이드 클라우드(온라인 전용) 파일/동기화 미완료 → 0바이트 방어
-            if (file.size === 0) {
-                alert("선택한 파일의 크기가 0바이트입니다.\n\n클라우드(Google Drive·OneDrive 등)의 '온라인 전용' 파일이거나\n다운로드(동기화)가 끝나지 않았을 수 있어요.\n기기에 실제로 내려받은 파일을 선택해 주세요.\n\n파일명: " + file.name);
-                event.target.value = ""; return;
-            }
-
-            const reader = new FileReader();
-            reader.onerror = function() {
-                alert("파일을 읽지 못했습니다. 다시 시도해 주세요.\n\n파일명: " + file.name);
-                event.target.value = "";
-            };
-            reader.onload = function(evt) {
-                let matrix = [];
-                let diag = `파일명: ${file.name}\n크기: ${file.size.toLocaleString()} bytes`;
-                let bytesLen = 0, sheetCount = 0, sheet0 = "";
-
-                // 1차 시도: array 방식
-                try {
-                    const bytes = new Uint8Array(evt.target.result);
-                    bytesLen = bytes.length;
-                    const wb = XLSX.read(bytes, {type: 'array'});
-                    sheetCount = (wb.SheetNames || []).length;
-                    sheet0 = (wb.SheetNames && wb.SheetNames[0]) ? wb.SheetNames[0] : "";
-                    matrix = readFirstSheetMatrix(wb);
-                } catch (e1) {
-                    diag += `\n[array 읽기 오류] ${e1.message}`;
-                }
-
-                // 2차 시도(1차가 비었을 때): binary 방식 — 일부 안드로이드 WebView 대응
-                if (!matrix || matrix.length === 0) {
-                    try {
-                        const bytes = new Uint8Array(evt.target.result);
-                        let bin = "";
-                        const CHUNK = 0x8000;
-                        for (let i = 0; i < bytes.length; i += CHUNK) {
-                            bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
-                        }
-                        const wb2 = XLSX.read(bin, {type: 'binary'});
-                        if (!sheetCount) { sheetCount = (wb2.SheetNames || []).length; sheet0 = (wb2.SheetNames && wb2.SheetNames[0]) ? wb2.SheetNames[0] : ""; }
-                        let m2 = readFirstSheetMatrix(wb2);
-                        if (m2 && m2.length) { matrix = m2; diag += `\n(binary 방식으로 재읽기 성공)`; }
-                    } catch (e2) {
-                        diag += `\n[binary 읽기 오류] ${e2.message}`;
-                    }
-                }
-
-                diag += `\n읽은 바이트: ${bytesLen} / 시트수: ${sheetCount} / 첫시트: '${sheet0}' / 행수: ${matrix.length}`;
-
-                let info = findBackupHeader(matrix);
-                if(!info){
-                    // 헤더를 못 찾았을 때, 데이터가 들어있는 첫 줄을 찾아 함께 표시(원인 파악용)
-                    let sampleRow = "";
-                    for(let r=0; r<Math.min(matrix.length, 30); r++){
-                        let cells = (matrix[r] || []).map(x => String(x).trim()).filter(x => x);
-                        if(cells.length){ sampleRow = `${r+1}행: ` + cells.slice(0, 8).join(", "); break; }
-                    }
-                    if(!sampleRow) sampleRow = "(데이터가 있는 행이 없음)";
-
-                    alert("백업 엑셀 양식을 인식하지 못했습니다.\n\n📄 파일에서 찾은 내용:\n" + sampleRow +
-                          "\n\n[기술 정보]\n" + diag +
-                          "\n\n※ '배치도' 엑셀이 아니라, [🗓️ 과거 기록] → [📥 연도별 백업 내보내기]로 저장한 파일을 선택해 주세요.\n" +
-                          "※ 필수 항목: '학번' + ('날짜' 또는 '시스템날짜')");
-                    event.target.value = ""; return;
-                }
-
-                window.tempBackupData = {};
-                window.tempBackupDisplayDates = {};
-
-                for(let i = info.rowIdx + 1; i < matrix.length; i++){
-                    let row = matrix[i] || [];
-
-                    let dateKey = "", dispDate = "";
-                    if(info.sysdate !== undefined){
-                        let sv = String(row[info.sysdate] || "").trim();
-                        if(/^\d{8}$/.test(sv)) dateKey = sv;
-                    }
-                    let rawDisp = (info.date !== undefined) ? String(row[info.date] || "").trim() : "";
-                    if(rawDisp) dispDate = rawDisp;
-                    if(!dateKey && rawDisp){
-                        let m = rawDisp.match(/(\d{4})[년.\-\/]?\s*(\d{1,2})[월.\-\/]?\s*(\d{1,2})/);
-                        if(m) dateKey = m[1] + pad2(m[2]) + pad2(m[3]);
-                    }
-                    if(!dateKey || dateKey.includes("기록된")) continue;
-
-                    let id = String(row[info.id] || "").trim();
-                    if(!id) continue;
-
-                    if(!window.tempBackupData[dateKey]){
-                        window.tempBackupData[dateKey] = { attended: {}, memo: "" };
-                        window.tempBackupDisplayDates[dateKey] = dispDate || `${dateKey.substring(0,4)}년 ${parseInt(dateKey.substring(4,6))}월 ${parseInt(dateKey.substring(6,8))}일`;
-                    }
-                    let status = (info.status !== undefined) ? String(row[info.status] || "").trim() : "";
-                    window.tempBackupData[dateKey].attended[id] = (status === "출석" || status === "O" || status === "o" || status === "1");
-                    if(info.memo !== undefined){
-                        let memo = String(row[info.memo] || "").trim();
-                        if(memo && !window.tempBackupData[dateKey].memo) window.tempBackupData[dateKey].memo = memo;
-                    }
-                }
-
-                let dates = Object.keys(window.tempBackupData).sort().reverse();
-                if(dates.length === 0){ alert("파일은 정상 인식되었으나, 복원할 출결 데이터가 없습니다."); event.target.value = ""; return; }
-
-                window.backupAvailableDates = dates;
-                let initialDateStr = dates[0];
-                let initialYear  = parseInt(initialDateStr.substring(0, 4));
-                let initialMonth = parseInt(initialDateStr.substring(4, 6));
-
-                document.getElementById('modal-title').innerText = "📂 복원할 날짜 선택";
-                renderBackupCalendar(initialYear, initialMonth);
-                event.target.value = "";
-            };
-            reader.readAsArrayBuffer(file);
-        }
-
-        function renderBackupCalendar(year, month) {
-            let availableDates = window.backupAvailableDates || [];
-            let firstDay = new Date(year, month - 1, 1).getDay();
-            let daysInMonth = new Date(year, month, 0).getDate();
-
-            let html = `<div class="cal-header">
-                <button class="cal-nav-btn" onclick="changeBackupCalendarMonth(${year}, ${month}, -1)">◀ 이전</button>
-                <span>${year}년 ${month}월</span>
-                <button class="cal-nav-btn" onclick="changeBackupCalendarMonth(${year}, ${month}, 1)">다음 ▶</button>
-            </div>`;
-
-            html += `<div class="cal-grid">`;
-            const dayNames = ['일','월','화','수','목','금','토'];
-            dayNames.forEach((d, i) => {
-                let colorClass = i === 0 ? 'cal-sun' : (i === 6 ? 'cal-sat' : '');
-                html += `<div class="cal-day-header ${colorClass}">${d}</div>`;
+        // ── 2) 구글 드라이브 자동 백업 (동적 GSI 로드 — 앱 시작 시 깜빡임 없음) ──
+        const GDRIVE_SCOPE="https://www.googleapis.com/auth/drive.file";
+        let gsiPromise=null;
+        function ensureGsi(){
+            if(typeof google!=="undefined" && google.accounts && google.accounts.oauth2) return Promise.resolve(true);
+            if(gsiPromise) return gsiPromise;
+            gsiPromise=new Promise(res=>{
+                const s=document.createElement('script');
+                s.src='https://accounts.google.com/gsi/client'; s.async=true; s.defer=true;
+                s.onload=()=>{ let tries=0; const t=setInterval(()=>{ tries++;
+                    if(typeof google!=="undefined"&&google.accounts&&google.accounts.oauth2){clearInterval(t);res(true);}
+                    else if(tries>40){clearInterval(t);res(false);} },50); };
+                s.onerror=()=>res(false);
+                document.head.appendChild(s);
             });
-
-            for (let i = 0; i < firstDay; i++) html += `<div></div>`;
-
-            for (let d = 1; d <= daysInMonth; d++) {
-                let dStr = `${year}${String(month).padStart(2,'0')}${String(d).padStart(2,'0')}`;
-                let hasData = availableDates.includes(dStr);
-                let dow = new Date(year, month - 1, d).getDay();
-                if (hasData) {
-                    // 데이터가 있는 날: 터치 반응이 확실한 <button>으로 생성 + data 속성으로도 이중 연결
-                    html += `<button type="button" class="cal-day has-data" data-backup-date="${dStr}">${d}</button>`;
-                } else {
-                    let colorStyle = "";
-                    if(dow === 0) colorStyle = "style='color:#fc8181;'";
-                    if(dow === 6) colorStyle = "style='color:#63b3ed;'";
-                    html += `<div class="cal-day" ${colorStyle}>${d}</div>`;
-                }
-            }
-            html += `</div>`;
-            html += `<div style="margin-top:20px; font-size:13px; color:#718096; text-align:center; background:#f8fafc; padding:10px; border-radius:8px;">
-                💡 <b>파란색</b>으로 활성화된 날짜를 터치하면<br>해당 일자의 출결 상태가 즉시 복원됩니다.
-            </div>`;
-            let mb = document.getElementById('modal-body');
-            mb.innerHTML = html;
-            // 안전망: 인라인 onclick이 막히는 환경 대비, 위임 방식으로도 처리(중복 등록 방지)
-            if (!mb.dataset.calBound) {
-                mb.addEventListener('click', function(ev) {
-                    let cell = ev.target.closest && ev.target.closest('[data-backup-date]');
-                    if (cell) renderBackupDate(cell.getAttribute('data-backup-date'));
+            return gsiPromise;
+        }
+        let gTokenClient=null, gAccessToken="", gTokenExp=0, gTokenCb=null;
+        function gd(){ let c={}; try{ c=JSON.parse(localStorage.getItem('nightStudyDriveCfg')||'{}'); }catch(e){} return c; }
+        function gdSave(c){ localStorage.setItem('nightStudyDriveCfg', JSON.stringify(c)); }
+        function gdriveFolder(){ return NS_TITLE+"_백업"; }
+        function gisReady(){ return typeof google!=="undefined" && google.accounts && google.accounts.oauth2; }
+        async function gInitClient(){
+            const cfg=gd(); if(!cfg.clientId){nsToast("먼저 클라이언트 ID를 입력하세요");return false;}
+            if(!gisReady()){ await ensureGsi(); }
+            if(!gisReady()){nsToast("구글 모듈 로딩 실패(인터넷 확인)");return false;}
+            if(!gTokenClient){
+                gTokenClient=google.accounts.oauth2.initTokenClient({
+                    client_id:cfg.clientId, scope:GDRIVE_SCOPE,
+                    callback:(resp)=>{ if(resp&&resp.access_token){gAccessToken=resp.access_token; gTokenExp=Date.now()+(resp.expires_in?resp.expires_in*1000:3500000); if(gTokenCb){const cb=gTokenCb;gTokenCb=null;cb(true);}}
+                        else { if(gTokenCb){const cb=gTokenCb;gTokenCb=null;cb(false);} } },
+                    error_callback:()=>{ if(gTokenCb){const cb=gTokenCb;gTokenCb=null;cb(false);} }
                 });
-                mb.dataset.calBound = "1";
             }
+            return true;
         }
-
-        function changeBackupCalendarMonth(year, month, delta) {
-            let newMonth = month + delta, newYear = year;
-            if (newMonth < 1) { newMonth = 12; newYear--; }
-            else if (newMonth > 12) { newMonth = 1; newYear++; }
-            renderBackupCalendar(newYear, newMonth);
+        function _gGetTokenAfterInit(interactive,res){
+            gTokenCb=res;
+            try{ gTokenClient.requestAccessToken({prompt: interactive?"consent":""}); }
+            catch(e){ gTokenCb=null; res(false); }
         }
-
-        // 엑셀 백업 복원 — 조회 전용(읽기 모드, 수정 불가)
-        function renderBackupDate(dateStr) {
-            let record = window.tempBackupData ? window.tempBackupData[dateStr] : null;
-            if (!record) { alert("선택한 날짜의 데이터를 찾을 수 없습니다."); return; }
-            window.isBackupMode = true;
-            attendedState = record.attended || {};
-            currentDisplayDate = window.tempBackupDisplayDates[dateStr] || `${dateStr.substring(0,4)}년 ${parseInt(dateStr.substring(4,6))}월 ${parseInt(dateStr.substring(6,8))}일`;
-
-            let memoEl = document.getElementById('daily-memo');
-            memoEl.value = record.memo || "";
-            memoEl.disabled = true;
-
-            let statusEl = document.getElementById('info-status');
-            if (statusEl) {
-                let dispShort = currentDisplayDate.split('(')[0].trim();
-                statusEl.innerText = `📂 복원: ${dispShort}`;
-                statusEl.style.background = '#f4ecf7';
-                statusEl.style.color = '#8e44ad';
+        function gGetToken(interactive){
+            return new Promise(res=>{
+                if(gAccessToken && Date.now()<gTokenExp-60000) return res(true);
+                gInitClient().then(okInit=>{ if(!okInit) return res(false); _gGetTokenAfterInit(interactive,res); });
+            });
+        }
+        async function gFetch(url,opts){ opts=opts||{}; opts.headers=Object.assign({Authorization:"Bearer "+gAccessToken},opts.headers||{});
+            const r=await fetch(url,opts); if(r.status===401){gAccessToken="";throw new Error("auth");} return r; }
+        async function gEnsureFolder(){
+            const cfg=gd(); const fname=gdriveFolder();
+            if(cfg.folderId && cfg.folderName===fname){
+                try{const r=await gFetch(`https://www.googleapis.com/drive/v3/files/${cfg.folderId}?fields=id,trashed`);
+                    if(r.ok){const j=await r.json(); if(j.id&&!j.trashed)return cfg.folderId;}}catch(e){}
             }
-            checkPastModeUI();
-            syncAttendance();
-            closeHistoryModal();
-            alert(`📂 [엑셀 기록 조회]\n${currentDisplayDate} 기록을 표시합니다.\n조회 모드에서는 수정이 불가능합니다.`);
+            const q=encodeURIComponent(`name='${fname}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+            let r=await gFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`);
+            let j=await r.json();
+            if(j.files&&j.files.length){cfg.folderId=j.files[0].id;cfg.folderName=fname;gdSave(cfg);return cfg.folderId;}
+            r=await gFetch("https://www.googleapis.com/drive/v3/files?fields=id",{method:"POST",
+                headers:{"Content-Type":"application/json"}, body:JSON.stringify({name:fname,mimeType:"application/vnd.google-apps.folder"})});
+            j=await r.json(); cfg.folderId=j.id; cfg.folderName=fname; gdSave(cfg); return cfg.folderId;
         }
+        async function gFindFile(name,folderId){
+            const q=encodeURIComponent(`name='${name}' and '${folderId}' in parents and trashed=false`);
+            const r=await gFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`);
+            const j=await r.json(); return (j.files&&j.files.length)?j.files[0]:null;
+        }
+        async function gPutFile(name,jsonStr,folderId,existingId){
+            const form=new FormData();
+            const meta=existingId?{name}:{name,parents:[folderId]};
+            form.append("metadata",new Blob([JSON.stringify(meta)],{type:"application/json"}));
+            form.append("file",new Blob([jsonStr],{type:"application/json"}));
+            const url=existingId?`https://www.googleapis.com/upload/drive/v3/files/${existingId}?uploadType=multipart&fields=id,name`
+                :`https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name`;
+            const r=await gFetch(url,{method:existingId?"PATCH":"POST",body:form});
+            if(!r.ok)throw new Error("upload "+r.status); return await r.json();
+        }
+        async function gCleanOld(folderId,keepDays){
+            try{ const q=encodeURIComponent(`'${folderId}' in parents and trashed=false`);
+                const r=await gFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,createdTime)&orderBy=createdTime`);
+                const j=await r.json(); if(!j.files)return; const cutoff=Date.now()-(keepDays||30)*86400000;
+                for(const f of j.files){ if(f.name==="최신.json")continue;
+                    if(new Date(f.createdTime).getTime()<cutoff){ try{await gFetch(`https://www.googleapis.com/drive/v3/files/${f.id}`,{method:"DELETE"});}catch(e){} } }
+            }catch(e){}
+        }
+        async function gUploadBackup(){
+            const folderId=await gEnsureFolder();
+            const jsonStr=JSON.stringify(buildNightBackup());
+            const latest=await gFindFile("최신.json",folderId);
+            await gPutFile("최신.json",jsonStr,folderId,latest?latest.id:null);
+            const dayName=nsTodayStr()+".json"; const dayFile=await gFindFile(dayName,folderId);
+            const uploaded=await gPutFile(dayName,jsonStr,folderId,dayFile?dayFile.id:null);
+            gCleanOld(folderId,gd().keepDays||30); return uploaded;
+        }
+        async function driveConnect(){
+            nsToast("구글 모듈 준비 중...");
+            if(!(await gInitClient()))return;
+            const ok=await gGetToken(true); if(!ok){nsToast("구글 연결 취소/실패");return;}
+            try{ await gEnsureFolder(); renderDriveStatus(); nsToast("구글 드라이브 연결됨"); }
+            catch(e){ nsToast("폴더 준비 실패 — 권한 확인"); }
+        }
+        async function driveBackupNow(interactive){
+            const cfg=gd(); if(!cfg.clientId){nsToast("클라이언트 ID를 입력하세요");return;}
+            const ok=await gGetToken(interactive!==false);
+            if(!ok){ if(interactive!==false)nsToast("구글 인증 필요 — [구글 연결] 먼저"); return; }
+            try{ const f=await gUploadBackup(); renderDriveStatus(f.name); if(interactive!==false)nsToast("드라이브 업로드 완료: "+f.name); }
+            catch(e){ if(interactive!==false)nsToast("업로드 실패 — 연결/권한 확인"); }
+        }
+        function toggleDriveSettings(){ const p=document.getElementById("gd-settings-panel"); if(!p)return;
+            p.style.display=(p.style.display==="none"||!p.style.display)?"block":"none"; }
+        function saveDriveClientId(){const c=gd();c.clientId=document.getElementById("gd-clientid").value.trim();gdSave(c);gTokenClient=null;renderDriveStatus();}
+        function toggleDriveAuto(){const c=gd();c.auto=document.getElementById("gd-auto").checked;gdSave(c);renderDriveStatus();}
+        function saveDriveKeepDays(){const c=gd();c.keepDays=+document.getElementById("gd-keepdays").value||30;gdSave(c);}
+        function renderDriveStatus(lastName){
+            const cfg=gd(),el=document.getElementById("gd-status"); if(!el)return;
+            let s=cfg.clientId?"✅ 클라이언트 ID 등록됨":"❌ 클라이언트 ID 미등록";
+            s+=cfg.folderId?` · 📁 폴더 연결됨`:" · 📁 폴더 미연결";
+            s+=cfg.auto?" · 🔄 자동 ON":" · 자동 OFF"; s+=` · 보관 <b>${cfg.keepDays||30}일</b>`;
+            if(lastName)s+=`<br>🕒 최근 업로드: <b>${nsEsc(lastName)}</b>`;
+            el.innerHTML=s;
+            const a=document.getElementById("gd-auto"); if(a)a.checked=!!cfg.auto;
+            const c=document.getElementById("gd-clientid"); if(c&&!c.value)c.value=cfg.clientId||"";
+            const k=document.getElementById("gd-keepdays"); if(k)k.value=String(cfg.keepDays||30);
+        }
+
+        // ── 3) 엑셀 내보내기 (전체 기간 출결·특이사항, 보고용) ──
+        function exportNightXlsx(){
+            if(typeof XLSX==="undefined"){nsToast("엑셀 모듈 로딩 실패(인터넷 필요)");return;}
+            const rows=[["날짜","구분","학번","이름","특이사항"]]; let any=false;
+            const histKeys=[]; for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i); if(k&&k.startsWith('smartAttendanceHistory_v2'))histKeys.push(k);}
+            histKeys.sort();
+            histKeys.forEach(hk=>{
+                let hist={}; try{ hist=JSON.parse(localStorage.getItem(hk)||'{}'); }catch(e){return;}
+                const roomTag = hk.endsWith('_A')?'1실':hk.endsWith('_B')?'2실':'';
+                Object.keys(hist).sort().forEach(dk=>{
+                    const rec=hist[dk]; const disp=(rec&&rec.displayDate)||dk;
+                    const att=(rec&&rec.attended)||{};
+                    const ids=Object.keys(att).filter(id=>att[id]);
+                    ids.forEach(id=>{ const nm=(typeof studentMap!=='undefined'&&studentMap[id])?studentMap[id].name:''; rows.push([disp, roomTag+'출석', id, nm, '']); any=true; });
+                    if(rec&&rec.dailyMemo){ rows.push([disp, roomTag+'특이사항', '-', '-', rec.dailyMemo]); any=true; }
+                    if(ids.length===0 && !(rec&&rec.dailyMemo)){ rows.push([disp, roomTag+'기록', '-', '-', '(출석 0명)']); any=true; }
+                });
+            });
+            if(!any){ nsToast("내보낼 기록이 없습니다"); return; }
+            const wb=XLSX.utils.book_new(); const ws=XLSX.utils.aoa_to_sheet(rows);
+            ws['!cols']=[{wch:18},{wch:10},{wch:12},{wch:12},{wch:40}];
+            XLSX.utils.book_append_sheet(wb, ws, "심야자습기록");
+            XLSX.writeFile(wb, `${NS_TITLE}_기록_${nsStamp()}.xlsx`);
+            nsToast("엑셀 내보내기 완료");
+        }
+
+        // 앱 켤 때 자동 드라이브 백업 (자동 ON일 때만, 화면 로딩 후 4초)
+        (function autoNightDriveBackup(){
+            let cfg={}; try{ cfg=JSON.parse(localStorage.getItem('nightStudyDriveCfg')||'{}'); }catch(e){}
+            if(!cfg.auto||!cfg.clientId)return;
+            setTimeout(()=>{ ensureGsi().then(ok=>{ if(ok) setTimeout(()=>driveBackupNow(false),800); }); }, 4000);
+        })();
 
     </script>
+    <input type="file" id="ns-restore-file" accept=".json,application/json" style="display:none" onchange="doNightRestore(event)">
 </body>
 </html>
