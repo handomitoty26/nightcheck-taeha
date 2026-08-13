@@ -200,6 +200,18 @@
         </div>
     </div>
 
+    <div id="sheet-modal" class="modal-overlay">
+        <div class="modal-box" style="max-width: 340px;">
+            <div class="modal-header">
+                <span style="color:#2c3e50;">📋 자습실(층) 선택</span>
+            </div>
+            <div class="modal-body">
+                <p style="font-size:12px; color:#718096; margin-top:0;">연동할 층(시트)을 선택하세요. 학년이 자동으로 제목에 반영됩니다.</p>
+                <div id="sheet-pick-list"></div>
+                <button class="modal-close" style="margin-top:4px; background:#e2e8f0; color:#4a5568;" onclick="document.getElementById('sheet-modal').style.display='none'">취소</button>
+            </div>
+        </div>
+    </div>
     <div id="title-modal" class="modal-overlay">
         <div class="modal-box" style="max-width: 320px;">
             <div class="modal-header">
@@ -428,26 +440,259 @@
         document.getElementById('input-layout').addEventListener('change', function(e) {
             const file = e.target.files[0];
             if (!file) return;
-            localStorage.setItem('smartLayoutFileName_v2', file.name);
-            updateMainTitle(file.name);
-            
-            document.getElementById('info-layout').innerText = "✅ 로드됨";
-            document.getElementById('info-layout').classList.add('text-active');
-            
             const reader = new FileReader();
             reader.onload = function(evt) {
                 const data = new Uint8Array(evt.target.result);
                 const workbook = XLSX.read(data, {type: 'array'});
-                const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-                const matrix = XLSX.utils.sheet_to_json(firstSheet, {header: 1, defval: ""});
-                
-                localStorage.setItem('smartLayoutDB_v2', JSON.stringify(matrix));
-                generateGrid(matrix);
+                const applySheet = function(sheetName) {
+                    const sheet = workbook.Sheets[sheetName];
+                    const rawMatrix = XLSX.utils.sheet_to_json(sheet, {header: 1, defval: ""});
+                    const built = buildLayoutMatrix(rawMatrix);
+                    const matrix = built.matrix;
+                    localStorage.setItem('smartLayoutFileName_v2', file.name);
+                    // 신규형식은 학번 첫자리로 학년 판정 → 제목 자동 설정, 그 외엔 파일명 기준
+                    if (built.grade) {
+                        const newTitle = `${built.grade}학년 자습실`;
+                        document.getElementById('main-title').innerText = newTitle + " ✏️";
+                        localStorage.setItem('customRoomTitle_v2', newTitle);
+                        if (typeof updateGradePrefix === 'function') updateGradePrefix(newTitle);
+                    } else {
+                        updateMainTitle(file.name);
+                    }
+                    document.getElementById('info-layout').innerText = "✅ 로드됨";
+                    document.getElementById('info-layout').classList.add('text-active');
+                    localStorage.setItem('smartLayoutDB_v2', JSON.stringify(matrix));
+                    generateGrid(matrix);
+                    if (built.fmt === 'modern') {
+                        let cnt = 0;
+                        matrix.forEach(row => (row||[]).forEach(cell => { if (/^\d{4}\s+\S/.test(String(cell||'').trim())) cnt++; }));
+                        nsToast(sheetName + " 좌석 " + cnt + "칸을 불러왔습니다");
+                    }
+                };
+                if (workbook.SheetNames.length > 1) showSheetPicker(workbook, applySheet);
+                else applySheet(workbook.SheetNames[0]);
             };
             reader.readAsArrayBuffer(file);
+            e.target.value = "";
         });
 
         // 엑셀 데이터를 분석하여 통로 공간(빈칸)을 얇게 줄여 화면 낭비 방지
+        // =========================================================
+        // [v1.2] 2학기 배정표(인쇄용) 연동 — 태하관 자습실출석부 v1_8 로직 이식
+        //  · 시트(층) 선택  · 학번행+이름행 자동 병합  · 학년별 좌석틀 복원
+        // =========================================================
+        const FACILITY_WORDS = ['출입문', '지도교사석', '사감교사 책상', '사감교사책상'];
+        const SEAT_FRAMES = {
+            '1': ["SSSSSS.SSSS","SSSSSS.SSSS","...........","SSSSSS.SSSS","SSSSSS.SSSS","...........","SSSSSS.SSSS","SSSSSS.SSSS","...........","SSSSSS.SSSS","SSSSSS.SSSS","...........","SSSSSS.SSSS","SSSSSS.SSSS","...........","SS.....SSSS","SS.....SSSS","...........","....T..SSSS","......DSSSS","..........."],
+            '2': ["SSSSSS.SSSS","SSSSSS.SSSS","...........","SSSSSS.SSSS","SSSSSS.SSSS","...........","SSSSSS.SSSS","SSSSSS.SSSS","...........","SSSSSS.SSSS","SSSSSS.SSSS","...........","SSSSSS.SSSS","SSSSSS.SSSS","...........","SSS...SSSSS","SSS...SSSSS","...........","....T......","......D....","..........."],
+            '3': ["SSSSSS.SSSS","SSSSSS.SSSS","...........","SSSSSS.SSSS","SSSSSS.SSSS","...........","SSSSSS.SSSS","SSSSSS.SSSS","...........","SSSSSS.SSSS","SSSSSS.SSSS","...........","SSSSSS.SSSS","SSSSSS.SSSS","...........","SSSS....SSS","SSSS....SSS","...........","....T......","......D....","..........."]
+        };
+
+        // 형식 감지: 한 칸에 "1105 김경준" = 기존형식(legacy) / 학번행·이름행 분리 = 신규형식(modern)
+        function detectLayoutFormat(matrix) {
+            for (let r = 0; r < matrix.length; r++)
+                for (let c = 0; c < (matrix[r] || []).length; c++)
+                    if (/^\d{4}\s+\S+/.test(String(matrix[r][c] ?? "").trim())) return 'legacy';
+            for (let r = 0; r < matrix.length - 1; r++)
+                for (let c = 0; c < (matrix[r] || []).length; c++) {
+                    const v = String(matrix[r][c] ?? "").trim();
+                    const below = String((matrix[r + 1] || [])[c] ?? "").trim();
+                    if (/^\d{4}$/.test(v) && /^[가-힣A-Za-z]/.test(below)) return 'modern';
+                }
+            return 'legacy';
+        }
+
+        // 신규형식 → "1105 김경준" 형태로 병합. skipFill=true면 원본 행 번호를 보존한다.
+        function convertModernLayout(matrix, skipFill) {
+            const result = [];
+            const usedRows = new Set();
+            for (let r = 0; r < matrix.length; r++) {
+                if (usedRows.has(r)) { if (skipFill) result.push([]); continue; }
+                const row = matrix[r] || [], nextRow = matrix[r + 1] || [];
+                let isIdRow = false;
+                for (let c = 0; c < row.length; c++) {
+                    const v = String(row[c] ?? "").trim();
+                    const below = String(nextRow[c] ?? "").trim();
+                    if (/^\d{4}$/.test(v) && /^[가-힣A-Za-z]/.test(below)) { isIdRow = true; break; }
+                }
+                if (isIdRow) {
+                    const merged = [], width = Math.max(row.length, nextRow.length);
+                    for (let c = 0; c < width; c++) {
+                        const id = String(row[c] ?? "").trim(), nm = String(nextRow[c] ?? "").trim();
+                        if (/^\d{4}$/.test(id) && nm) merged.push(id + " " + nm);
+                        else if (FACILITY_WORDS.indexOf(id) >= 0) merged.push(id);
+                        else if (FACILITY_WORDS.indexOf(nm) >= 0) merged.push(nm);
+                        else merged.push("");
+                    }
+                    result.push(merged); usedRows.add(r + 1);
+                } else {
+                    const plain = []; let hasFacility = false;
+                    for (let c = 0; c < row.length; c++) {
+                        const v = String(row[c] ?? "").trim();
+                        if (FACILITY_WORDS.indexOf(v) >= 0) { plain.push(v); hasFacility = true; }
+                        else plain.push("");
+                    }
+                    result.push(hasFacility ? plain : new Array(row.length).fill(""));
+                }
+            }
+            return skipFill ? result : fillEmptySeats(result);
+        }
+
+        // 좌석 영역 내부의 빈 셀을 빈자리로 채움 (좌석틀이 없을 때만 사용)
+        function fillEmptySeats(matrix) {
+            const maxCols = Math.max(...matrix.map(r => (r || []).length), 0);
+            const seatCols = new Set(), seatRows = new Set();
+            for (let r = 0; r < matrix.length; r++)
+                for (let c = 0; c < maxCols; c++)
+                    if (/^\d{4}\s+\S+/.test(String((matrix[r] || [])[c] ?? "").trim())) { seatCols.add(c); seatRows.add(r); }
+            for (let r = 0; r < matrix.length; r++) {
+                if (!seatRows.has(r)) continue;
+                if (!matrix[r]) matrix[r] = [];
+                for (let c = 0; c < maxCols; c++) {
+                    if (!seatCols.has(c)) continue;
+                    if (String(matrix[r][c] ?? "").trim() === "") matrix[r][c] = "빈자리";
+                }
+            }
+            return matrix;
+        }
+
+        // 배정표를 학년 좌석틀에 매핑. 인쇄용 템플릿(좌측 B~G, 우측 I~L,
+        // 학번행 (r-2)%5∈{0,2})은 절대 위치로 대응시켜 빈 행·열까지 보존한다.
+        function applySeatFrame(matrix, grade) {
+            const frame = SEAT_FRAMES[grade];
+            if (!frame) return matrix;
+            const width = Math.max(...frame.map(l => l.length));
+
+            function findSplit(cells) {
+                const byRow = new Map();
+                cells.forEach(x => { if (!byRow.has(x.r)) byRow.set(x.r, []); byRow.get(x.r).push(x.c); });
+                const votes = new Map();
+                byRow.forEach(cols => {
+                    cols.sort((a, b) => a - b);
+                    for (let i = 1; i < cols.length; i++)
+                        if (cols[i] - cols[i - 1] > 1) { votes.set(cols[i], (votes.get(cols[i]) || 0) + 1); break; }
+                });
+                let best = null, bestN = 0;
+                votes.forEach((n, col) => { if (n > bestN) { bestN = n; best = col; } });
+                return best;
+            }
+
+            const frameCells = [];
+            for (let r = 0; r < frame.length; r++)
+                for (let c = 0; c < width; c++)
+                    if ((frame[r][c] || '.') === 'S') frameCells.push({ r, c });
+            const fSplit = findSplit(frameCells);
+            const fL = frameCells.filter(x => fSplit === null || x.c < fSplit);
+            const fR = frameCells.filter(x => fSplit !== null && x.c >= fSplit);
+            const fRows = [...new Set(frameCells.map(x => x.r))].sort((a, b) => a - b);
+            const fLCols = [...new Set(fL.map(x => x.c))].sort((a, b) => a - b);
+            const fRCols = [...new Set(fR.map(x => x.c))].sort((a, b) => a - b);
+            const fSet = new Set(frameCells.map(x => x.r + ',' + x.c));
+
+            const src = [];
+            for (let r = 0; r < matrix.length; r++)
+                for (let c = 0; c < (matrix[r] || []).length; c++) {
+                    const v = String(matrix[r][c] ?? "").trim();
+                    if (/^\d{4}\s+\S+/.test(v)) src.push({ r, c, val: v });
+                }
+            if (src.length === 0) return matrix;
+
+            const TPL_L = [1, 2, 3, 4, 5, 6], TPL_R = [8, 9, 10, 11];
+            const tplRows = [], maxR = Math.max(...src.map(x => x.r));
+            for (let r = 2; r <= maxR + 4; r++) if ((r - 2) % 5 === 0 || (r - 2) % 5 === 2) tplRows.push(r);
+            const fitsTemplate = src.every(x =>
+                tplRows.indexOf(x.r) !== -1 && (TPL_L.indexOf(x.c) !== -1 || TPL_R.indexOf(x.c) !== -1));
+
+            const out = [];
+            for (let r = 0; r < frame.length; r++) {
+                const row = new Array(width).fill("");
+                for (let c = 0; c < width; c++) {
+                    const ch = frame[r][c] || '.';
+                    if (ch === 'T') row[c] = "지도교사석";
+                    else if (ch === 'D') row[c] = "출입문";
+                    else if (ch === 'S') row[c] = "빈자리";
+                }
+                out.push(row);
+            }
+
+            const placed = new Set();
+            if (fitsTemplate) {
+                src.forEach(cell => {
+                    const ri = tplRows.indexOf(cell.r);
+                    const isLeft = TPL_L.indexOf(cell.c) !== -1;
+                    const ci = isLeft ? TPL_L.indexOf(cell.c) : TPL_R.indexOf(cell.c);
+                    const tr = fRows[ri], tc = isLeft ? fLCols[ci] : fRCols[ci];
+                    if (tr !== undefined && tc !== undefined && fSet.has(tr + ',' + tc)) {
+                        out[tr][tc] = cell.val; placed.add(cell.val);
+                    }
+                });
+            } else {
+                const sSplit = findSplit(src);
+                [[src.filter(x => sSplit === null || x.c < sSplit), fL],
+                 [src.filter(x => sSplit !== null && x.c >= sSplit), fR]].forEach(([sB, fB]) => {
+                    if (!sB.length || !fB.length) return;
+                    const sR = [...new Set(sB.map(x => x.r))].sort((a, b) => a - b);
+                    const sC = [...new Set(sB.map(x => x.c))].sort((a, b) => a - b);
+                    const bR = [...new Set(fB.map(x => x.r))].sort((a, b) => a - b);
+                    const bC = [...new Set(fB.map(x => x.c))].sort((a, b) => a - b);
+                    sB.forEach(cell => {
+                        const tr = bR[sR.indexOf(cell.r)], tc = bC[sC.indexOf(cell.c)];
+                        if (tr !== undefined && tc !== undefined && fSet.has(tr + ',' + tc)) {
+                            out[tr][tc] = cell.val; placed.add(cell.val);
+                        }
+                    });
+                });
+            }
+
+            const outside = src.map(x => x.val).filter(v => !placed.has(v));
+            if (outside.length > 0) {
+                out.push(new Array(width).fill(""));
+                for (let i = 0; i < outside.length; i += width) {
+                    const extra = new Array(width).fill("");
+                    for (let j = 0; j < width && i + j < outside.length; j++) extra[j] = outside[i + j];
+                    out.push(extra);
+                }
+                setTimeout(() => {
+                    alert("\u26a0\ufe0f 좌석틀에 배치하지 못한 학생이 " + outside.length + "명 있습니다.\n\n학번: "
+                        + outside.map(v => v.split(/\s+/)[0]).join(', ')
+                        + "\n\n해당 학생은 화면 하단에 별도로 표시됩니다.");
+                }, 600);
+            }
+            return out;
+        }
+
+        function buildLayoutMatrix(rawMatrix) {
+            const fmt = detectLayoutFormat(rawMatrix);
+            if (fmt !== 'modern') return { matrix: rawMatrix, grade: null, fmt: fmt };
+            const raw = convertModernLayout(rawMatrix, true);
+            let grade = null;
+            outer:
+            for (let r = 0; r < raw.length; r++)
+                for (let c = 0; c < (raw[r] || []).length; c++) {
+                    const m = String(raw[r][c] ?? "").trim().match(/^(\d)\d{3}\s+\S+/);
+                    if (m) { grade = m[1]; break outer; }
+                }
+            if (grade && SEAT_FRAMES[grade]) return { matrix: applySeatFrame(raw, grade), grade: grade, fmt: fmt };
+            return { matrix: convertModernLayout(rawMatrix, false), grade: grade, fmt: fmt };
+        }
+
+        // 시트 선택 팝업 (심야자습 모달 방식)
+        function showSheetPicker(workbook, onSelect) {
+            const names = workbook.SheetNames;
+            const box = document.getElementById('sheet-pick-list');
+            box.innerHTML = "";
+            names.forEach(function(nm) {
+                const b = document.createElement('button');
+                b.className = 'load-btn';
+                b.style.marginBottom = '8px';
+                b.style.width = '100%';
+                b.innerText = nm;
+                b.onclick = function() { document.getElementById('sheet-modal').style.display = 'none'; onSelect(nm); };
+                box.appendChild(b);
+            });
+            document.getElementById('sheet-modal').style.display = 'flex';
+        }
+
         function generateGrid(matrix) {
             const board = document.getElementById('grid-board');
             board.innerHTML = "";
@@ -497,7 +742,7 @@
                         div.className = "empty-seat";
                         div.innerText = "빈자리";
                         board.appendChild(div);
-                    } else if (cell === "지도교사석" || cell === "출입문") {
+                    } else if (FACILITY_WORDS.indexOf(cell) >= 0) {
                         const div = document.createElement('div');
                         div.className = "facility";
                         div.innerText = cell;
