@@ -1,0 +1,8 @@
+{
+  "name": "nightcheck-taeha-tests",
+  "private": true,
+  "description": "시험 전용(앱은 index.html 그대로 GitHub Pages로 배포 — 빌드 없음). 옆에 nightcheck-seo가 있으면 그 index.html도 함께 시험한다",
+  "scripts": {
+    "test": "node --test \"tests/*.test.mjs\""
+  }
+}

@@ -1002,6 +1002,7 @@
             nsToast(`백업 완료 (저장된 날짜 ${countNightDays()}일)`);
         }
         // ── JSON 백업 복원 ──
+        // [restore:start] 복원은 이 앱의 백업 키만 받고, 끝나면 드라이브 지문 기록을 지운다(복원 파일로 "이미 올렸다"는 기록이 들어오지 않게, 다음 켤 때 다시 올린다)
         function doNightRestore(ev){
             const f=ev.target.files[0]; if(!f)return;
             const rd=new FileReader();
@@ -1011,63 +1012,110 @@
                 let dayCnt=0; Object.keys(d.store).filter(k=>k.startsWith('smartAttendanceHistory_v2')).forEach(k=>{ try{ dayCnt+=Object.keys(JSON.parse(d.store[k])).length; }catch(e){} });
                 if(!confirm(`이 백업으로 복원할까요?\n저장된 날짜 ${dayCnt}일 · 현재 기기 내용은 대체됩니다.`)){ ev.target.value=''; return; }
                 nsBackupKeys().forEach(k=>localStorage.removeItem(k));
-                Object.keys(d.store).forEach(k=>localStorage.setItem(k, d.store[k]));
+                Object.keys(d.store).filter(k=>k==='nightStudyDriveCfg'||NS_PREFIXES.some(p=>k.startsWith(p))).forEach(k=>localStorage.setItem(k, d.store[k]));
+                driveStampClear();
                 nsToast('복원 완료 — 화면을 새로고침합니다');
                 setTimeout(()=>location.reload(), 900);
             }catch(err){ nsToast('복원 실패: 파일을 확인하세요'); }
             ev.target.value=''; };
             rd.readAsText(f);
         }
+        // [restore:end]
 
         // ── 2) 구글 드라이브 자동 백업 (동적 GSI 로드 — 앱 시작 시 깜빡임 없음) ──
         const GDRIVE_SCOPE="https://www.googleapis.com/auth/drive.file";
+        // [gsi:start] 구글 모듈 로드 — 15초 안에 안 되면 실패로 끝내고 다음에 다시 시도한다(드라이브 작업 줄이 막히지 않게, 두 앱 같은 코드)
+        const GSI_TIMEOUT_MS=15000;
         let gsiPromise=null;
         function ensureGsi(){
             if(typeof google!=="undefined" && google.accounts && google.accounts.oauth2) return Promise.resolve(true);
             if(gsiPromise) return gsiPromise;
             gsiPromise=new Promise(res=>{
+                let done=false, poll=null, limit=null;
+                const finish=(ok)=>{ if(done)return; done=true; clearTimeout(limit); if(poll)clearInterval(poll); if(!ok)gsiPromise=null; res(ok); };
+                limit=setTimeout(()=>finish(false),GSI_TIMEOUT_MS);
                 const s=document.createElement('script');
                 s.src='https://accounts.google.com/gsi/client'; s.async=true; s.defer=true;
-                s.onload=()=>{ let tries=0; const t=setInterval(()=>{ tries++;
-                    if(typeof google!=="undefined"&&google.accounts&&google.accounts.oauth2){clearInterval(t);res(true);}
-                    else if(tries>40){clearInterval(t);res(false);} },50); };
-                s.onerror=()=>res(false);
+                s.onload=()=>{ let tries=0; poll=setInterval(()=>{ tries++;
+                    if(typeof google!=="undefined"&&google.accounts&&google.accounts.oauth2) finish(true);
+                    else if(tries>40) finish(false); },50); };
+                s.onerror=()=>finish(false);
                 document.head.appendChild(s);
             });
             return gsiPromise;
         }
-        let gTokenClient=null, gAccessToken="", gTokenExp=0, gTokenCb=null;
+        // [gsi:end]
+        let gTokenClient=null, gAccessToken="", gTokenExp=0, gTokenCb=null, gAccessTokenFor=""; // gAccessTokenFor: 그 토큰을 받은 클라이언트 ID
         function gd(){ let c={}; try{ c=JSON.parse(localStorage.getItem('nightStudyDriveCfg')||'{}'); }catch(e){} return c; }
         function gdSave(c){ localStorage.setItem('nightStudyDriveCfg', JSON.stringify(c)); }
         function gdriveFolder(){ return NS_TITLE+"_백업"; }
         function gisReady(){ return typeof google!=="undefined" && google.accounts && google.accounts.oauth2; }
-        async function gInitClient(){
-            const cfg=gd(); if(!cfg.clientId){nsToast("먼저 클라이언트 ID를 입력하세요");return false;}
+        // [backup-stamp:start] 마지막으로 드라이브에 올린 내용의 지문 — 같으면 앱을 켤 때 구글 창(깜빡임) 없이 건너뛴다(심야 두 앱 같은 코드, 자습실 출석부에서 옮김, 시험이 이 구간을 읽는다)
+        const DRIVE_SKIP_MAX_MS=7*86400000; // 바뀐 것이 없어도 7일이 지나면 한 번은 올린다
+        function driveStampKey(){ const p=String(location.pathname||"/").replace(/index\.html$/i,"").replace(/\/+$/,""); return "studyDriveStamp:"+(p||"/"); }
+        function driveStamp(){ try{ const s=JSON.parse(localStorage.getItem(driveStampKey())||"{}"); return (s&&typeof s==="object"&&!Array.isArray(s))?s:{}; }catch(e){ return {}; } }
+        function driveStampSave(s){ try{ localStorage.setItem(driveStampKey(),JSON.stringify(s)); }catch(e){} }
+        function driveStampClear(){ try{ localStorage.removeItem(driveStampKey()); }catch(e){} }
+        // 지문 = 백업 store에서 드라이브 설정·자동 비움 시각을 뺀 내용의 SHA-256. 계산이 안 되면 ""(바뀐 것으로 보고 올린다)
+        async function studyBackupHash(store){
+            try{
+                if(!(window.crypto&&crypto.subtle&&typeof TextEncoder!=="undefined")) return "";
+                const keys=Object.keys(store||{}).filter(k=>k!=="nightStudyDriveCfg"&&k!=="lastAutoClearTimestamp_v2").sort();
+                const buf=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(JSON.stringify(keys.map(k=>[k,store[k]]))));
+                return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
+            }catch(e){ return ""; }
+        }
+        // 지문·클라이언트 ID·폴더 이름이 모두 같고 마지막 업로드가 7일 안이면 건너뛴다
+        function driveCanSkip(stamp,hash,clientId,folder,now){
+            return !!hash && !!stamp && stamp.hash===hash && stamp.clientId===clientId && stamp.folder===folder
+                && typeof stamp.uploadedAt==="number" && now>=stamp.uploadedAt && now-stamp.uploadedAt<DRIVE_SKIP_MAX_MS;
+        }
+        // [backup-stamp:end]
+        // [init-client:start] interactive가 false(자동 백업)면 토스트 없이 조용히 실패한다(심야 두 앱 같은 코드, 자습실 출석부에서 옮김, 시험이 이 구간을 읽는다)
+        async function gInitClient(interactive){
+            const loud=interactive!==false;
+            const cfg=gd(); if(!cfg.clientId){ if(loud)nsToast("먼저 클라이언트 ID를 입력하세요"); return false; }
             if(!gisReady()){ await ensureGsi(); }
-            if(!gisReady()){nsToast("구글 모듈 로딩 실패(인터넷 확인)");return false;}
+            if(!gisReady()){ if(loud)nsToast("구글 모듈 로딩 실패(인터넷 확인)"); return false; }
             if(!gTokenClient){
-                gTokenClient=google.accounts.oauth2.initTokenClient({
+                // 지금 쓰는 로그인 객체의 응답만 받는다 — 클라이언트 ID를 바꾼 뒤 늦게 온 옛 응답은 토큰도 콜백도 건드리지 않는다
+                const tc=google.accounts.oauth2.initTokenClient({
                     client_id:cfg.clientId, scope:GDRIVE_SCOPE,
-                    callback:(resp)=>{ if(resp&&resp.access_token){gAccessToken=resp.access_token; gTokenExp=Date.now()+(resp.expires_in?resp.expires_in*1000:3500000); if(gTokenCb){const cb=gTokenCb;gTokenCb=null;cb(true);}}
+                    callback:(resp)=>{ if(gTokenClient!==tc)return; if(resp&&resp.access_token){gAccessToken=resp.access_token; gAccessTokenFor=cfg.clientId; gTokenExp=Date.now()+(resp.expires_in?resp.expires_in*1000:3500000); if(gTokenCb){const cb=gTokenCb;gTokenCb=null;cb(true);}}
                         else { if(gTokenCb){const cb=gTokenCb;gTokenCb=null;cb(false);} } },
-                    error_callback:()=>{ if(gTokenCb){const cb=gTokenCb;gTokenCb=null;cb(false);} }
+                    error_callback:()=>{ if(gTokenClient!==tc)return; if(gTokenCb){const cb=gTokenCb;gTokenCb=null;cb(false);} }
                 });
+                gTokenClient=tc;
             }
             return true;
         }
+        // [init-client:end]
+        // [token:start] 토큰 요청 — 응답이 끝내 없으면 2분 뒤 실패로 끝낸다(드라이브 작업 줄이 영원히 막히지 않게, 두 앱 같은 코드)
+        const G_TOKEN_TIMEOUT_MS=120000;
         function _gGetTokenAfterInit(interactive,res){
-            gTokenCb=res;
+            let done=false, t=null;
+            const finish=(ok)=>{ if(done)return; done=true; clearTimeout(t); if(gTokenCb===finish)gTokenCb=null; res(ok); };
+            // 시간 초과면 그 로그인 객체를 버린다 — 늦게 온 옛 응답이 토큰을 저장하거나 다음 요청을 끝내지 못하게(다음 요청은 새 객체로)
+            t=setTimeout(()=>{ gTokenClient=null; finish(false); },G_TOKEN_TIMEOUT_MS);
+            gTokenCb=finish;
             try{ gTokenClient.requestAccessToken({prompt: interactive?"consent":""}); }
-            catch(e){ gTokenCb=null; res(false); }
+            catch(e){ finish(false); }
         }
         function gGetToken(interactive){
             return new Promise(res=>{
-                if(gAccessToken && Date.now()<gTokenExp-60000) return res(true);
-                gInitClient().then(okInit=>{ if(!okInit) return res(false); _gGetTokenAfterInit(interactive,res); });
+                // 받아 둔 토큰은 지금 클라이언트 ID의 것일 때만 다시 쓴다
+                if(gAccessToken && gAccessTokenFor===gd().clientId && Date.now()<gTokenExp-60000) return res(true);
+                gInitClient(interactive).then(okInit=>{
+                    if(!okInit) return res(false);
+                    _gGetTokenAfterInit(interactive,res);
+                }, ()=>res(false)); // 준비 중 예외도 실패로 끝내 드라이브 작업 줄을 푼다
             });
         }
+        // [token:end]
         async function gFetch(url,opts){ opts=opts||{}; opts.headers=Object.assign({Authorization:"Bearer "+gAccessToken},opts.headers||{});
             const r=await fetch(url,opts); if(r.status===401){gAccessToken="";throw new Error("auth");} return r; }
+        // [ensure-folder:start] 폴더 확인 — 저장할 때 최신 설정을 다시 읽어 폴더 칸만 합친다(그 사이 바꾼 설정을 되돌리지 않게, ID가 바뀌었으면 저장 안 함, 두 앱 같은 코드)
+        function gdSaveFolder(startId,folderId,fname){ const cur=gd(); if(cur.clientId!==startId)return; cur.folderId=folderId; cur.folderName=fname; gdSave(cur); }
         async function gEnsureFolder(){
             const cfg=gd(); const fname=gdriveFolder();
             if(cfg.folderId && cfg.folderName===fname){
@@ -1077,11 +1125,13 @@
             const q=encodeURIComponent(`name='${fname}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
             let r=await gFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`);
             let j=await r.json();
-            if(j.files&&j.files.length){cfg.folderId=j.files[0].id;cfg.folderName=fname;gdSave(cfg);return cfg.folderId;}
+            if(j.files&&j.files.length){ gdSaveFolder(cfg.clientId,j.files[0].id,fname); return j.files[0].id; }
             r=await gFetch("https://www.googleapis.com/drive/v3/files?fields=id",{method:"POST",
-                headers:{"Content-Type":"application/json"}, body:JSON.stringify({name:fname,mimeType:"application/vnd.google-apps.folder"})});
-            j=await r.json(); cfg.folderId=j.id; cfg.folderName=fname; gdSave(cfg); return cfg.folderId;
+                headers:{"Content-Type":"application/json"},
+                body:JSON.stringify({name:fname,mimeType:"application/vnd.google-apps.folder"})});
+            j=await r.json(); gdSaveFolder(cfg.clientId,j.id,fname); return j.id;
         }
+        // [ensure-folder:end]
         async function gFindFile(name,folderId){
             const q=encodeURIComponent(`name='${name}' and '${folderId}' in parents and trashed=false`);
             const r=await gFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`);
@@ -1105,40 +1155,77 @@
                     if(new Date(f.createdTime).getTime()<cutoff){ try{await gFetch(`https://www.googleapis.com/drive/v3/files/${f.id}`,{method:"DELETE"});}catch(e){} } }
             }catch(e){}
         }
+        // [upload:start] 드라이브 업로드 — 지문은 올린 내용으로, 두 파일이 모두 올라간 뒤에만(심야 두 앱 같은 코드, 자습실 출석부에서 옮김, 시험이 이 구간을 읽는다)
         async function gUploadBackup(){
+            const startId=gd().clientId, startFolder=gdriveFolder(); // 시작할 때의 설정 — 끝날 때 바뀌었으면 지문을 남기지 않는다
+            const ownToken=()=>{ if(gAccessTokenFor!==startId||gd().clientId!==startId) throw new Error("token owner"); }; // 다른 ID의 토큰으로는 올리지 않는다
+            ownToken();
             const folderId=await gEnsureFolder();
-            const jsonStr=JSON.stringify(buildNightBackup());
+            const payload=buildNightBackup(); // 한 번만 만든다 — 올리는 내용과 지문이 같은 내용이 되게
+            const jsonStr=JSON.stringify(payload);
+            const hash=await studyBackupHash(payload.store);
             const latest=await gFindFile("최신.json",folderId);
+            ownToken();
             await gPutFile("최신.json",jsonStr,folderId,latest?latest.id:null);
-            const dayName=nsTodayStr()+".json"; const dayFile=await gFindFile(dayName,folderId);
+            const dayName=nsTodayStr()+".json";
+            const dayFile=await gFindFile(dayName,folderId);
             const uploaded=await gPutFile(dayName,jsonStr,folderId,dayFile?dayFile.id:null);
-            gCleanOld(folderId,gd().keepDays||30); return uploaded;
+            // 두 파일이 모두 올라간 뒤에만 지문을 남긴다(실패하면 다음에 다시 올린다). 그 사이 클라이언트 ID·폴더가 바뀌었거나 토큰이 다른 ID의 것이면 남기지 않는다.
+            if(hash && gAccessTokenFor===startId && gd().clientId===startId && gdriveFolder()===startFolder)
+                driveStampSave({hash, clientId:startId, folder:startFolder, uploadedAt:Date.now(), name:(uploaded&&uploaded.name)||dayName});
+            gCleanOld(folderId,gd().keepDays||30);
+            return uploaded;
         }
-        async function driveConnect(){
+        // [upload:end]
+        // [drive-ops:start] 드라이브 작업(연결·백업)은 한 줄로 차례대로 — 자동·수동이 겹쳐도 토큰 응답·업로드 순서가 섞이지 않게(심야 두 앱 같은 코드, 자습실 출석부에서 옮김)
+        let driveQueue=Promise.resolve(), driveQueued=0;
+        // waitMsg: 앞 작업이 아직 돌고 있으면 줄을 서기 전에 바로 보여 줄 안내(수동 작업만 — 누른 단추가 반응이 없어 보이지 않게)
+        function driveSerial(fn,waitMsg){
+            if(waitMsg && driveQueued>0) nsToast(waitMsg);
+            driveQueued++;
+            const p=driveQueue.then(()=>fn()).finally(()=>{ driveQueued--; });
+            driveQueue=p.catch(()=>{});
+            return p;
+        }
+        function driveConnect(){ return driveSerial(async ()=>{
             nsToast("구글 모듈 준비 중...");
             if(!(await gInitClient()))return;
-            const ok=await gGetToken(true); if(!ok){nsToast("구글 연결 취소/실패");return;}
+            nsToast("구글 연결 중...");
+            const ok=await gGetToken(true);
+            if(!ok){nsToast("구글 연결 취소/실패");return;}
             try{ await gEnsureFolder(); renderDriveStatus(); nsToast("구글 드라이브 연결됨"); }
-            catch(e){ nsToast("폴더 준비 실패 — 권한 확인"); }
-        }
-        async function driveBackupNow(interactive){
-            const cfg=gd(); if(!cfg.clientId){nsToast("클라이언트 ID를 입력하세요");return;}
-            const ok=await gGetToken(interactive!==false);
-            if(!ok){ if(interactive!==false)nsToast("구글 인증 필요 — [구글 연결] 먼저"); return; }
-            try{ const f=await gUploadBackup(); renderDriveStatus(f.name); if(interactive!==false)nsToast("드라이브 업로드 완료: "+f.name); }
-            catch(e){ if(interactive!==false)nsToast("업로드 실패 — 연결/권한 확인"); }
-        }
+            catch(e){ nsToast("폴더 준비 실패 — 권한을 확인하세요"); }
+        }, "앞의 드라이브 작업이 끝나면 이어서 연결합니다"); }
+        // interactive가 false(자동 백업)면 실패해도 토스트 없이 조용히
+        function driveBackupNow(interactive){ const loud=interactive!==false; return driveSerial(async ()=>{
+            const cfg=gd(); if(!cfg.clientId){ if(loud)nsToast("클라이언트 ID를 입력하세요"); return; }
+            if(!loud && !cfg.auto) return; // 줄을 서는 사이 자동 백업이 꺼졌으면 하지 않는다
+            const ok=await gGetToken(loud);
+            if(!ok){ if(loud)nsToast("구글 인증 필요 — [구글 연결]을 먼저 눌러주세요"); return; }
+            try{ const f=await gUploadBackup(); renderDriveStatus(f.name); if(loud)nsToast("드라이브 업로드 완료: "+f.name); }
+            catch(e){ if(loud)nsToast("업로드 실패 — 연결/권한 확인"); }
+        }, loud ? "앞의 드라이브 작업이 끝나면 이어서 백업합니다" : null); }
+        // [drive-ops:end]
         function toggleDriveSettings(){ const p=document.getElementById("gd-settings-panel"); if(!p)return;
             p.style.display=(p.style.display==="none"||!p.style.display)?"block":"none"; }
-        function saveDriveClientId(){const c=gd();c.clientId=document.getElementById("gd-clientid").value.trim();gdSave(c);gTokenClient=null;renderDriveStatus();}
+        // [client-id:start] 클라이언트 ID를 바꾸면 받아 둔 토큰·지문 기록을 버린다(옛 ID의 토큰으로 올리고 새 ID로 기록하지 않게)
+        function saveDriveClientId(){const c=gd();c.clientId=document.getElementById("gd-clientid").value.trim();gdSave(c);gTokenClient=null;gAccessToken="";gAccessTokenFor="";gTokenExp=0;
+            if(gTokenCb){const cb=gTokenCb;gTokenCb=null;cb(false);} // 옛 ID로 기다리던 토큰 요청은 실패로 끝낸다
+            driveStampClear();renderDriveStatus();}
+        // [client-id:end]
         function toggleDriveAuto(){const c=gd();c.auto=document.getElementById("gd-auto").checked;gdSave(c);renderDriveStatus();}
         function saveDriveKeepDays(){const c=gd();c.keepDays=+document.getElementById("gd-keepdays").value||30;gdSave(c);}
+        function fmtStampTime(ms){ const d=new Date(ms); return `${d.getMonth()+1}월 ${d.getDate()}일 ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`; }
         function renderDriveStatus(lastName){
             const cfg=gd(),el=document.getElementById("gd-status"); if(!el)return;
             let s=cfg.clientId?"✅ 클라이언트 ID 등록됨":"❌ 클라이언트 ID 미등록";
             s+=cfg.folderId?` · 📁 폴더 연결됨`:" · 📁 폴더 미연결";
             s+=cfg.auto?" · 🔄 자동 ON":" · 자동 OFF"; s+=` · 보관 <b>${cfg.keepDays||30}일</b>`;
-            if(lastName)s+=`<br>🕒 최근 업로드: <b>${nsEsc(lastName)}</b>`;
+            const stp=driveStamp();
+            if(typeof stp.uploadedAt==="number"){
+                s+=`<br>🕒 마지막 업로드: <b>${nsEsc(fmtStampTime(stp.uploadedAt))}</b>`;
+                if(typeof stp.skippedAt==="number"&&stp.skippedAt>stp.uploadedAt) s+=` · 그 뒤 바뀐 것이 없어 건너뜀(<b>${nsEsc(fmtStampTime(stp.skippedAt))}</b>)`;
+            } else if(lastName)s+=`<br>🕒 최근 업로드: <b>${nsEsc(lastName)}</b>`;
             el.innerHTML=s;
             const a=document.getElementById("gd-auto"); if(a)a.checked=!!cfg.auto;
             const c=document.getElementById("gd-clientid"); if(c&&!c.value)c.value=cfg.clientId||"";
@@ -1171,13 +1258,31 @@
             nsToast("엑셀 내보내기 완료");
         }
 
-        // 앱 켤 때 자동 드라이브 백업 (자동 ON일 때만, 화면 로딩 후 4초)
-        (function autoNightDriveBackup(){
-            let cfg={}; try{ cfg=JSON.parse(localStorage.getItem('nightStudyDriveCfg')||'{}'); }catch(e){}
-            if(!cfg.auto||!cfg.clientId)return;
-            setTimeout(()=>{ ensureGsi().then(ok=>{ if(ok) setTimeout(()=>driveBackupNow(false),800); }); }, 4000);
+        // [auto-backup:start] 앱 켤 때 자동 드라이브 백업 (인증·인터넷 있을 때만 조용히, 두 앱 같은 코드)
+        // [v1.9] 켜자마자 실행한다(지연 없음 — 구글 창이 뜨더라도 화면 조작 전에 끝나게). 마지막으로 올린 내용과 같으면 구글 창을 열지 않고 건너뛴다.
+        // 순서: 자동 ON·클라이언트 ID → 지문 비교 → 다르면 구글 모듈 로드 성공 확인 → 조용한 업로드. 실패는 모두 조용히 끝난다.
+        (function autoStudyDriveBackup(){
+            // 켠 뒤 이 안에 구글 모듈이 준비되지 않으면 이번에는 건너뛴다(느린 인터넷에서 로그인 창이 늦게 떠 누르던 터치가 취소되지 않게)
+            const AUTO_WINDOW_MS=3000;
+            function start(){
+                try{
+                    const cfg=gd();
+                    if(!cfg.auto||!cfg.clientId)return;  // 자동백업 OFF면 GSI 아예 로드 안 함
+                    const t0=Date.now();
+                    // 시작할 때의 설정 그대로일 때만 이어 간다(그 사이 자동 백업을 끄거나 클라이언트 ID를 바꾸면 멈춘다)
+                    const same=()=>{ const c=gd(); return !!c.auto && c.clientId===cfg.clientId; };
+                    studyBackupHash(buildNightBackup().store).then(hash=>{
+                        if(!same()) return;
+                        const st=driveStamp(), now=Date.now();
+                        if(driveCanSkip(st,hash,cfg.clientId,gdriveFolder(),now)){ st.skippedAt=now; driveStampSave(st); return; }
+                        return ensureGsi().then(ok=>{ if(ok && same() && Date.now()-t0<=AUTO_WINDOW_MS) return driveBackupNow(false); });
+                    }).catch(()=>{});
+                }catch(e){}
+            }
+            // 앱 화면 준비(window.onload — 09시 비움 포함)가 끝난 직후에 비교한다(먼저 등록된 onload가 먼저 돈다, 타이머 없음)
+            if(document.readyState==="complete") start(); else window.addEventListener("load",start,{once:true});
         })();
-
+        // [auto-backup:end]
     </script>
     <input type="file" id="ns-restore-file" accept=".json,application/json" style="display:none" onchange="doNightRestore(event)">
 <!-- dorm-install-banner:start -->
